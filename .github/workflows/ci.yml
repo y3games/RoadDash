@@ -1,0 +1,39 @@
+# Pre-merge gate. `deploy.yml` runs the same checks on main, but only after a
+# merge — too late to stop a broken change. This runs them on the pull request
+# instead, which is also what makes auto-merge safe: the merge waits for this.
+name: CI
+
+on:
+  pull_request:
+  # Lets a branch be validated before a PR exists (and covers a force-push
+  # while the PR is open).
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A new push to the same PR makes the previous run irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Same Node as deploy.yml, so a green PR cannot fail the deploy on a
+      # runtime difference.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run check
+
+      # Type-check passes in `check`; this catches bundling failures, which a
+      # type-check cannot see.
+      - run: npm run build

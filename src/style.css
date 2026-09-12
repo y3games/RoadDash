@@ -1,0 +1,118 @@
+:root {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: #0d1117;
+  overflow: hidden;
+}
+
+#game {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Stop the browser from turning aiming drags into scrolls or text selection. */
+#game canvas {
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* First-visit name prompt. A DOM overlay, not a Phaser scene — the canvas has
+   no text field, and Korean input needs a real <input> for the IME. */
+#welcome {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: #0d1117;
+  font-family:
+    'Apple SD Gothic Neo', 'Noto Sans KR', -apple-system, BlinkMacSystemFont, sans-serif;
+  color: #ffffff;
+}
+
+/* An id rule with `display` beats the UA stylesheet's `[hidden] { display: none }`,
+   so the overlay would stay on screen after the name is submitted. */
+#welcome[hidden] {
+  display: none;
+}
+
+#welcome-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 320px;
+}
+
+#welcome-form h1 {
+  margin: 0;
+  font-size: 22px;
+}
+
+#welcome-form p {
+  margin: 0;
+  font-size: 14px;
+  color: #ffffffaa;
+}
+
+#welcome-name {
+  padding: 14px 16px;
+  border: 1px solid #ffffff33;
+  border-radius: 10px;
+  background: #161b22;
+  color: inherit;
+  /* Anything under 16px makes iOS Safari zoom the page on focus. */
+  font: inherit;
+  font-size: 16px;
+}
+
+#welcome-name:focus {
+  outline: 2px solid #4fc3f7;
+  outline-offset: 1px;
+}
+
+.welcome-actions {
+  display: flex;
+  gap: 8px;
+}
+
+#welcome-form button {
+  flex: 1;
+  padding: 14px 16px;
+  border: 0;
+  border-radius: 10px;
+  background: #4fc3f7;
+  color: #0d1117;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+/* Repeats #welcome-form so it outranks `#welcome-form button` above — an id
+   plus an element selector beats a bare id. */
+#welcome-form #welcome-cancel {
+  flex: 0 0 auto;
+  background: transparent;
+  border: 1px solid #ffffff33;
+  color: #ffffffaa;
+}
+
+#welcome-error {
+  color: #ff8a80;
+}

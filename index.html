@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="description" content="Phaser 3 웹 게임" />
+    <title>Phaser Starter</title>
+  </head>
+  <body>
+    <div id="game"></div>
+
+    <!-- Name dialog: the first-visit gate and later renames. nameGate.ts fills
+         in the heading and decides whether 취소 is available. -->
+    <div id="welcome" hidden>
+      <form id="welcome-form">
+        <h1 id="welcome-title">이름을 정해주세요</h1>
+        <p>이 기기에서 점수를 기록할 이름입니다.</p>
+        <input
+          id="welcome-name"
+          type="text"
+          maxlength="12"
+          autocomplete="nickname"
+          enterkeyhint="go"
+          placeholder="예: 플레이어1"
+        />
+        <div class="welcome-actions">
+          <button type="submit">확인</button>
+          <button type="button" id="welcome-cancel" hidden>취소</button>
+        </div>
+        <p id="welcome-error" role="alert" hidden></p>
+      </form>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
