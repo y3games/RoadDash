@@ -12,6 +12,8 @@ body {
   height: 100%;
   background: #0d1117;
   overflow: hidden;
+  /* Steering is a drag, so a downward one must not pull-to-refresh the page. */
+  overscroll-behavior: none;
 }
 
 #game {
@@ -22,7 +24,7 @@ body {
   justify-content: center;
 }
 
-/* Stop the browser from turning aiming drags into scrolls or text selection. */
+/* Stop the browser from turning steering drags into scrolls or text selection. */
 #game canvas {
   touch-action: none;
   user-select: none;
@@ -41,7 +43,11 @@ body {
   padding: 24px;
   background: #0d1117;
   font-family:
-    'Apple SD Gothic Neo', 'Noto Sans KR', -apple-system, BlinkMacSystemFont, sans-serif;
+    'Apple SD Gothic Neo',
+    'Noto Sans KR',
+    -apple-system,
+    BlinkMacSystemFont,
+    sans-serif;
   color: #ffffff;
 }
 
@@ -82,7 +88,7 @@ body {
 }
 
 #welcome-name:focus {
-  outline: 2px solid #4fc3f7;
+  outline: 2px solid #ffc400;
   outline-offset: 1px;
 }
 
@@ -96,7 +102,7 @@ body {
   padding: 14px 16px;
   border: 0;
   border-radius: 10px;
-  background: #4fc3f7;
+  background: #ffc400;
   color: #0d1117;
   font: inherit;
   font-size: 16px;
