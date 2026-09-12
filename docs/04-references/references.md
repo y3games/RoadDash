@@ -3,15 +3,18 @@
 ## Phaser
 
 - [Phaser 3 API 문서](https://docs.phaser.io/api-documentation/api-documentation) — 3.90 기준
-- [Phaser 3 예제](https://labs.phaser.io/) — Matter 물리 예제가 특히 유용
+- [Phaser 3 예제](https://labs.phaser.io/) — Graphics·Scene 예제가 특히 유용
 - [Scale Manager](https://docs.phaser.io/phaser/concepts/scale-manager) — `Scale.FIT`, 반응형 캔버스
 
 검색하면 Phaser 4 자료가 섞여 나온다. 이 템플릿은 3.90.0 고정이고 4는 API가 다르다.
 
-## Matter.js
+## 물리 엔진
 
-- [Matter.js 문서](https://brm.io/matter-js/docs/) — `restitution`, `friction`, `frictionStatic`
-- Phaser에 내장되어 있어 별도 설치 불필요
+RoadDash는 Matter.js를 **쓰지 않는다** — 이유는 [ADR-004](../02-architecture/adr-004-물리-엔진-제거.md).
+Phaser에 내장되어 있으므로 되살리는 데 설치는 필요 없지만, 되살리기 전에 그 문서를 먼저 읽을 것.
+
+- [Graphics](https://docs.phaser.io/phaser/concepts/gameobjects/graphics) — 도로 폴리곤과 런타임 텍스처
+- [Matter.js 문서](https://brm.io/matter-js/docs/) — 참고용
 
 ## 배포
 

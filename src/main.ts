@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 
-import { LAYOUT, PHYSICS } from './game/config';
+import { COLORS, LAYOUT } from './game/config';
 import { BootScene } from './scenes/BootScene';
 import { GameScene } from './scenes/GameScene';
 import { UIScene } from './scenes/UIScene';
@@ -15,7 +15,7 @@ import './style.css';
 // id is what keeps their saved data apart: the personal best lives under
 // `<GAME_ID>.best`. Keep it equal to the repository name (lowercased) — that is
 // also the id the games portal looks the score up by.
-const GAME_ID = 'phaser-starter';
+const GAME_ID = 'roaddash';
 
 // The one place the app decides where scores live. Swapping in a server-backed
 // implementation later is a change to this line and nothing else.
@@ -30,18 +30,15 @@ const game = new Phaser.Game({
   parent: 'game',
   width: LAYOUT.width,
   height: LAYOUT.height,
-  backgroundColor: '#141a24',
+  backgroundColor: COLORS.background,
   scale: {
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
-  physics: {
-    default: 'matter',
-    matter: {
-      gravity: { x: 0, y: PHYSICS.gravityY },
-      debug: false,
-    },
-  },
+  // No `physics` block, deliberately: RoadDash has no physics engine. The car is
+  // kinematic and every collision is a pure rectangle test in `game/collision`,
+  // which is what lets a full run be simulated headlessly. See
+  // docs/02-architecture/adr-004-물리-엔진-제거.md before adding one back.
   scene: [BootScene, GameScene, UIScene],
   callbacks: {
     // preBoot runs before any scene is created, so scenes can rely on this.

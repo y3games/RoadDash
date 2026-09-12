@@ -1,165 +1,268 @@
 import Phaser from 'phaser';
 
-import { LAYOUT, PHYSICS } from '../game/config';
-import { ballRadius, pickKind, scoreForKind } from '../game/rules';
-import { ballTextureKey } from './BootScene';
+import { CAR, COLORS, LAYOUT, MOTION, TRACK } from '../game/config';
+import { scoreForDistance } from '../game/difficulty';
+import { steerInput } from '../game/input';
+import type { ObstacleKind } from '../game/obstacles';
+import type { CrashReason, WorldState } from '../game/world';
+import { createWorld, stepWorld } from '../game/world';
+import type { Player } from '../services/player';
+import type { ScoreService } from '../services/ScoreService';
+import { CAR_TEXTURE, obstacleTextureKey } from './BootScene';
 
 /** Events this scene emits for UIScene to render. */
 export const GameEvents = {
   score: 'score',
-  next: 'next',
+  levelUp: 'level-up',
+  started: 'started',
+  gameOver: 'game-over',
 } as const;
 
 /** Events UIScene emits back at this scene. */
 export const UiEvents = {
-  /** `true` while a DOM overlay is open, so a tap on it is not also a drop. */
+  /** `true` while a DOM overlay is open: the car must not drive itself. */
   inputLock: 'ui:input-lock',
 } as const;
 
+export interface GameOverPayload {
+  readonly score: number;
+  readonly best: number;
+  readonly isNewBest: boolean;
+  readonly reason: CrashReason;
+}
+
+/** Px of track per dash on the centre line, drawn every other period. */
+const DASH_PERIOD = 48;
+
 /**
- * Physics, input and rendering. Every rule decision comes from `game/rules`;
- * this scene only reports facts to it and applies the result.
+ * Input, drawing and nothing else.
  *
- * Replace the demo loop below with your own game — the structure around it
- * (pure rules, config table, scene split, ScoreService) is the part to keep.
+ * Every decision — where the road goes, what is passable, whether the run is
+ * over — comes from `game/world`. This scene reports the player's steering to it
+ * and draws what comes back, which is why none of the game's rules need a
+ * browser to be tested.
  */
 export class GameScene extends Phaser.Scene {
-  private balls: Phaser.Physics.Matter.Image[] = [];
-  private heldKind = 0;
-  private nextKind = 0;
-  private held?: Phaser.GameObjects.Image;
-  private score = 0;
-  private canDrop = false;
-  /** Set while an overlay owns the pointer; independent of the drop cooldown. */
-  private inputLocked = false;
-  private aimX = LAYOUT.width / 2;
+  private world!: WorldState;
+  private road!: Phaser.GameObjects.Graphics;
+  private car!: Phaser.GameObjects.Image;
+  private pool = new Map<ObstacleKind, Phaser.GameObjects.Image[]>();
+  private cursors?: Phaser.Types.Input.Keyboard.CursorKeys;
+  private keyA?: Phaser.Input.Keyboard.Key;
+  private keyD?: Phaser.Input.Keyboard.Key;
+  /** The one pointer that steers. A second finger must not teleport the car. */
+  private pointerId: number | null = null;
+  private pointerX = LAYOUT.width / 2;
+  /** Set while an overlay owns the screen, so the world holds still. */
+  private frozen = false;
+  private over = false;
 
   constructor() {
     super('GameScene');
   }
 
   create(): void {
-    this.balls = [];
-    this.score = 0;
-    this.canDrop = true;
-    this.inputLocked = false;
+    // scene.restart() reuses this instance, so every field is re-initialised
+    // here rather than at the declaration.
+    this.world = createWorld(this.pickSeed());
+    this.pool = new Map();
+    this.pointerId = null;
+    this.pointerX = LAYOUT.width / 2;
+    this.frozen = false;
+    this.over = false;
 
-    this.events.on(UiEvents.inputLock, (locked: boolean) => (this.inputLocked = locked));
+    this.cameras.main.setBackgroundColor(COLORS.background);
+    this.road = this.add.graphics().setDepth(-10);
+    this.car = this.add.image(this.world.carX, LAYOUT.carScreenY, CAR_TEXTURE).setDepth(10);
 
-    this.buildPlayfield();
+    this.cursors = this.input.keyboard?.createCursorKeys();
+    this.keyA = this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.A);
+    this.keyD = this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.D);
+    // Without this the arrow keys scroll the page instead of steering.
+    this.input.keyboard?.addCapture('LEFT,RIGHT,A,D,SPACE');
 
-    this.heldKind = pickKind(Math.random());
-    this.nextKind = pickKind(Math.random());
-    this.held = this.add.image(this.aimX, LAYOUT.dropY, ballTextureKey(this.heldKind));
-
-    this.input.on('pointermove', (p: Phaser.Input.Pointer) => this.aim(p.x));
-    // Firing on pointerup, not pointerdown, keeps a mobile scroll gesture from
-    // dropping a ball the player never meant to release.
-    this.input.on('pointerup', (p: Phaser.Input.Pointer) => {
-      this.aim(p.x);
-      this.drop();
+    this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
+      if (this.pointerId !== null) return;
+      this.pointerId = p.id;
+      this.pointerX = p.x;
     });
+    this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
+      if (p.id === this.pointerId) this.pointerX = p.x;
+    });
+    const release = (p: Phaser.Input.Pointer) => {
+      if (p.id === this.pointerId) this.pointerId = null;
+    };
+    this.input.on('pointerup', release);
+    this.input.on('pointerupoutside', release);
+
+    this.events.on(UiEvents.inputLock, (locked: boolean) => {
+      this.frozen = locked;
+      // Drop the held pointer: the tap that opened the dialog would otherwise
+      // still be steering when it closes.
+      if (locked) this.pointerId = null;
+    });
+
+    this.drawRoad();
+    this.syncObstacles();
 
     this.scene.launch('UIScene');
     this.time.delayedCall(0, () => {
-      this.events.emit(GameEvents.score, this.score);
-      this.events.emit(GameEvents.next, this.nextKind);
+      this.events.emit(GameEvents.score, 0);
+      this.events.emit(GameEvents.levelUp, { level: 1, axis: null });
     });
   }
 
-  private buildPlayfield(): void {
-    const { wallLeft, wallRight, floorY, wallThickness, width, height } = LAYOUT;
-    const opts = { isStatic: true, restitution: 0, friction: PHYSICS.friction };
-
-    this.matter.add.rectangle(
-      wallLeft - wallThickness / 2,
-      height / 2,
-      wallThickness,
-      height,
-      opts,
-    );
-    this.matter.add.rectangle(
-      wallRight + wallThickness / 2,
-      height / 2,
-      wallThickness,
-      height,
-      opts,
-    );
-    this.matter.add.rectangle(width / 2, floorY + wallThickness / 2, width, wallThickness, opts);
-
-    this.add
-      .rectangle(
-        width / 2,
-        (LAYOUT.dropY + floorY) / 2,
-        wallRight - wallLeft,
-        floorY - LAYOUT.dropY,
-      )
-      .setStrokeStyle(1, 0xffffff, 0.08)
-      .setDepth(-1);
-  }
-
-  private aim(x: number): void {
-    const r = ballRadius(this.heldKind);
-    this.aimX = Phaser.Math.Clamp(x, LAYOUT.wallLeft + r, LAYOUT.wallRight - r);
-    this.held?.setX(this.aimX);
-  }
-
-  private drop(): void {
-    if (!this.canDrop || this.inputLocked) return;
-    this.canDrop = false;
-
-    this.spawnBall(this.aimX, LAYOUT.dropY, this.heldKind);
-    this.heldKind = this.nextKind;
-    this.nextKind = pickKind(Math.random());
-    this.events.emit(GameEvents.next, this.nextKind);
-
-    this.held?.setVisible(false);
-    this.time.delayedCall(PHYSICS.dropCooldownMs, () => {
-      this.canDrop = true;
-      this.held?.setTexture(ballTextureKey(this.heldKind)).setVisible(true);
-      this.aim(this.aimX);
-    });
-  }
-
-  private spawnBall(x: number, y: number, kind: number): void {
-    const radius = ballRadius(kind);
-    const image = this.matter.add.image(x, y, ballTextureKey(kind), undefined, {
-      shape: { type: 'circle', radius },
-      restitution: PHYSICS.restitution,
-      friction: PHYSICS.friction,
-      frictionStatic: PHYSICS.frictionStatic,
-      density: PHYSICS.density,
-      label: 'ball',
-    });
-    image.setData('kind', kind);
-    image.setData('scored', false);
-    // A ball spawns at rest, so "settled" is true on its very first frame. It
-    // only counts as landed after it has actually been in motion.
-    image.setData('moved', false);
-    this.balls.push(image);
-  }
-
-  override update(): void {
-    this.balls = this.balls.filter((b) => b.active);
-
-    for (const ball of this.balls) {
-      if (ball.getData('scored')) continue;
-
-      const body = ball.body as MatterJS.BodyType | null;
-      if (body === null) continue;
-
-      const moving = body.speed >= PHYSICS.settleSpeed;
-      if (!ball.getData('moved')) {
-        // Unlike a position-based gate, this always becomes true: a dropped
-        // ball accelerates past the threshold long before it lands.
-        if (moving) ball.setData('moved', true);
-        continue;
-      }
-      if (moving) continue;
-
-      ball.setData('scored', true);
-      this.score += scoreForKind(ball.getData('kind') as number);
-      this.events.emit(GameEvents.score, this.score);
+  /**
+   * A fresh seed per run, except in dev where `?seed=` replays an exact track —
+   * the only practical way to look at a crash twice.
+   */
+  private pickSeed(): number {
+    if (import.meta.env.DEV) {
+      const requested = Number(new URLSearchParams(location.search).get('seed'));
+      if (Number.isFinite(requested) && requested !== 0) return requested;
     }
+    return Date.now() & 0x7fffffff;
+  }
+
+  private steer(): number {
+    const keys = {
+      left: (this.cursors?.left.isDown ?? false) || (this.keyA?.isDown ?? false),
+      right: (this.cursors?.right.isDown ?? false) || (this.keyD?.isDown ?? false),
+    };
+    const pointer = this.pointerId === null ? null : { down: true, x: this.pointerX };
+    return steerInput(keys, pointer, this.world.carX);
+  }
+
+  override update(_time: number, delta: number): void {
+    if (this.over) return;
+
+    const steer = this.frozen ? 0 : this.steer();
+    if (!this.frozen) {
+      // Clamped: a tab switch or a breakpoint produces deltas in the hundreds of
+      // ms, and believing one teleports the car into an obstacle nobody saw.
+      const dt = Math.min(delta, MOTION.maxFrameMs) / 1000;
+      const result = stepWorld(this.world, dt, steer);
+
+      this.events.emit(GameEvents.score, result.score);
+      if (result.levelUp !== null) this.events.emit(GameEvents.levelUp, result.levelUp);
+      if (this.world.started) this.events.emit(GameEvents.started);
+    }
+
+    this.drawRoad();
+    this.syncObstacles();
+    this.car.setX(this.world.carX);
+    this.car.setRotation(steer * CAR.leanRad);
+
+    if (this.world.crash !== null) this.endRun(this.world.crash);
+  }
+
+  /** Track distance to screen y. The car never moves up or down the screen. */
+  private screenY(s: number): number {
+    return LAYOUT.carScreenY - (s - this.world.carS);
+  }
+
+  /**
+   * The road as **one filled polygon** per frame: left edge forward, right edge
+   * back. Stitching it from per-segment quads instead leaves an antialiased
+   * hairline at every joint, and there are forty of them.
+   */
+  private drawRoad(): void {
+    const { nodes } = this.world.track;
+    const g = this.road;
+    // Forgetting this leaves last frame's road smeared under this one, which
+    // reads as a rendering bug rather than as a missing call.
+    g.clear();
+
+    const surface: Phaser.Math.Vector2[] = [];
+    const leftEdge: Phaser.Math.Vector2[] = [];
+    const rightEdge: Phaser.Math.Vector2[] = [];
+
+    for (const node of nodes) {
+      const y = this.screenY(node.s);
+      leftEdge.push(new Phaser.Math.Vector2(node.centerX - node.halfWidth, y));
+      rightEdge.push(new Phaser.Math.Vector2(node.centerX + node.halfWidth, y));
+    }
+    surface.push(...leftEdge, ...[...rightEdge].reverse());
+
+    g.fillStyle(COLORS.road, 1);
+    g.fillPoints(surface, true);
+
+    g.lineStyle(3, COLORS.roadEdge, 0.85);
+    g.strokePoints(leftEdge, false);
+    g.strokePoints(rightEdge, false);
+
+    g.lineStyle(4, COLORS.centerLine, 0.22);
+    for (let i = 1; i < nodes.length; i += 1) {
+      const a = nodes[i - 1];
+      if (Math.floor(a.s / DASH_PERIOD) % 2 !== 0) continue;
+      const b = nodes[i];
+      g.lineBetween(a.centerX, this.screenY(a.s), b.centerX, this.screenY(b.s));
+    }
+  }
+
+  /**
+   * Position the obstacle sprites from the world's rows, reusing images from a
+   * pool. Creating and destroying them per row instead produces GC pauses that,
+   * at 620 px/s, read as the car stuttering into a wall.
+   */
+  private syncObstacles(): void {
+    const used = new Map<ObstacleKind, number>();
+
+    for (const row of this.world.rows) {
+      const y = this.screenY(row.s);
+      if (y < -TRACK.nodeStepPx || y > LAYOUT.height + TRACK.nodeStepPx) continue;
+
+      for (const obstacle of row.obstacles) {
+        const index = used.get(obstacle.kind) ?? 0;
+        used.set(obstacle.kind, index + 1);
+        this.sprite(obstacle.kind, index).setPosition(obstacle.x, y).setVisible(true);
+      }
+    }
+
+    for (const [kind, sprites] of this.pool) {
+      for (let i = used.get(kind) ?? 0; i < sprites.length; i += 1) sprites[i].setVisible(false);
+    }
+  }
+
+  private sprite(kind: ObstacleKind, index: number): Phaser.GameObjects.Image {
+    let sprites = this.pool.get(kind);
+    if (sprites === undefined) {
+      sprites = [];
+      this.pool.set(kind, sprites);
+    }
+    if (sprites[index] === undefined) {
+      sprites[index] = this.add.image(0, 0, obstacleTextureKey(kind)).setDepth(5);
+    }
+    return sprites[index];
+  }
+
+  /**
+   * Report the finished run once, then stop simulating.
+   *
+   * The best score is read before submitting so the panel can say what the
+   * record was, and `submit()` answers whether this run beat it — no second
+   * comparison to get wrong.
+   */
+  private endRun(reason: CrashReason): void {
+    this.over = true;
+    this.cameras.main.shake(220, 0.012);
+    this.car.setTintFill(0xff5252);
+
+    const score = scoreForDistance(this.world.carS);
+    const service = this.registry.get('scoreService') as ScoreService | undefined;
+    const player = this.registry.get('player') as Player | undefined;
+
+    void (async () => {
+      const previous = (await service?.getBest()) ?? 0;
+      const isNewBest =
+        service !== undefined && player !== undefined ? await service.submit(score, player) : false;
+      const payload: GameOverPayload = {
+        score,
+        best: Math.max(previous, score),
+        isNewBest,
+        reason,
+      };
+      this.events.emit(GameEvents.gameOver, payload);
+    })();
   }
 }
