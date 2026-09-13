@@ -4,6 +4,7 @@ import { COLORS, LAYOUT } from './game/config';
 import { BootScene } from './scenes/BootScene';
 import { GameScene } from './scenes/GameScene';
 import { UIScene } from './scenes/UIScene';
+import { CarStore } from './services/CarStore';
 import { LocalScoreService } from './services/LocalScoreService';
 import type { ScoreService } from './services/ScoreService';
 import { ensurePlayer } from './ui/nameGate';
@@ -20,6 +21,10 @@ const GAME_ID = 'roaddash';
 // The one place the app decides where scores live. Swapping in a server-backed
 // implementation later is a change to this line and nothing else.
 const scoreService: ScoreService = new LocalScoreService(GAME_ID);
+
+// Which car the player drives. A per-game preference, so it is keyed by the
+// same id rather than kept in the origin-wide player cookie.
+const carStore = new CarStore(GAME_ID);
 
 // Who is playing. A returning browser is recognised by its cookie; a first
 // visit is asked for a name before the game boots, because the HUD shows it.
@@ -44,6 +49,7 @@ const game = new Phaser.Game({
     // preBoot runs before any scene is created, so scenes can rely on this.
     preBoot: (game) => {
       game.registry.set('scoreService', scoreService);
+      game.registry.set('carStore', carStore);
       game.registry.set('player', player);
     },
   },

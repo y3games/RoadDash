@@ -1,13 +1,15 @@
 import Phaser from 'phaser';
 
-import { CAR, COLORS, LAYOUT, MOTION, TRACK } from '../game/config';
+import type { CarColorId } from '../game/config';
+import { CAR, COLORS, DEFAULT_CAR_COLOR, LAYOUT, MOTION, TRACK } from '../game/config';
 import { steerInput } from '../game/input';
 import type { ObstacleKind } from '../game/obstacles';
 import type { CrashReason, WorldState } from '../game/world';
 import { createWorld, currentScore, drivableBounds, stepWorld } from '../game/world';
+import type { CarStore } from '../services/CarStore';
 import type { Player } from '../services/player';
 import type { ScoreService } from '../services/ScoreService';
-import { CAR_TEXTURE, obstacleTextureKey } from './BootScene';
+import { carTextureKey, obstacleTextureKey } from './BootScene';
 
 /** Events this scene emits for UIScene to render. */
 export const GameEvents = {
@@ -19,8 +21,10 @@ export const GameEvents = {
 
 /** Events UIScene emits back at this scene. */
 export const UiEvents = {
-  /** `true` while a DOM overlay is open: the car must not drive itself. */
+  /** `true` while an overlay owns the pointer: the car must not drive itself. */
   inputLock: 'ui:input-lock',
+  /** The player picked a different car. */
+  carColor: 'ui:car-color',
 } as const;
 
 export interface GameOverPayload {
@@ -72,7 +76,12 @@ export class GameScene extends Phaser.Scene {
 
     this.cameras.main.setBackgroundColor(COLORS.background);
     this.road = this.add.graphics().setDepth(-10);
-    this.car = this.add.image(this.world.carX, LAYOUT.carScreenY, CAR_TEXTURE).setDepth(10);
+
+    const carStore = this.registry.get('carStore') as CarStore | undefined;
+    const color: CarColorId = carStore?.read() ?? DEFAULT_CAR_COLOR;
+    this.car = this.add
+      .image(this.world.carX, LAYOUT.carScreenY, carTextureKey(color))
+      .setDepth(10);
 
     this.cursors = this.input.keyboard?.createCursorKeys();
     this.keyA = this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.A);
@@ -94,6 +103,10 @@ export class GameScene extends Phaser.Scene {
     };
     this.input.on('pointerup', release);
     this.input.on('pointerupoutside', release);
+
+    this.events.on(UiEvents.carColor, (picked: CarColorId) => {
+      this.car.setTexture(carTextureKey(picked));
+    });
 
     this.events.on(UiEvents.inputLock, (locked: boolean) => {
       this.frozen = locked;

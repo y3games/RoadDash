@@ -158,15 +158,6 @@ describe('a row of obstacles', () => {
     }
   });
 
-  it('closes gaps down in the tail, but never past the safe minimum', () => {
-    const late = chainRows(60, 300, 606);
-    const widths = late.map(({ row }) => row.gapWidth);
-    expect(Math.max(...widths)).toBeLessThan(
-      Math.max(...chainRows(29, 300, 606).map(({ row }) => row.gapWidth)),
-    );
-    expect(Math.min(...widths)).toBeGreaterThanOrEqual(SAFE_GAP - 1e-9);
-  });
-
   it('is reproducible from a seed', () => {
     expect(chainRows(15, 60, 2024)).toEqual(chainRows(15, 60, 2024));
     expect(chainRows(15, 60, 2024)).not.toEqual(chainRows(15, 60, 2025));

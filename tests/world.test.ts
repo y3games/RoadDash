@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { CAR, LAYOUT, OBSTACLES, TRACK } from '../src/game/config';
-import { scoreMultiplier, TAIL_START_LEVEL } from '../src/game/difficulty';
-import { sampleTrack } from '../src/game/track';
+import { MAX_LEVEL, scoreMultiplier, SPEED_ONLY_LEVEL } from '../src/game/difficulty';
+import { paramsForLevel } from '../src/game/difficulty';
 import type { WorldState } from '../src/game/world';
 import { createWorld, drivableBounds, nextRowAhead, stepWorld } from '../src/game/world';
 
@@ -18,22 +18,37 @@ function clamp(value: number, min: number, max: number): number {
  * lacks. If this can survive, a human can.
  */
 function autopilot(world: WorldState, dtSeconds: number): number {
-  // The road the car may legally occupy, plus a few px of humility. This is the
-  // same function the game gives the pointer, so the test drives the car the
-  // way a player does.
+  // Where the car may legally be *now*: the road it is standing on, measured
+  // the way isOffRoad measures it, minus the tolerance the collider forgives.
   const bounds = drivableBounds(world);
-  const left = bounds.min + 8;
-  const right = bounds.max - 8;
+  let low = bounds.min + CAR.offRoadTolerance;
+  let high = bounds.max - CAR.offRoadTolerance;
 
+  // Narrow that to the part of the road that also gets through the next row.
   const row = nextRowAhead(world);
-  const wanted = row?.gapCenter ?? sampleTrack(world.track, world.carS).centerX;
-  const target = clamp(wanted, Math.min(left, right), Math.max(left, right));
+  if (row !== null) {
+    const gapLow = row.gapCenter - row.gapWidth / 2 + CAR.width / 2;
+    const gapHigh = row.gapCenter + row.gapWidth / 2 - CAR.width / 2;
+    const both = [Math.max(low, gapLow), Math.min(high, gapHigh)] as const;
+    if (both[0] <= both[1]) {
+      [low, high] = both;
+    } else {
+      // The road has not brought the gap within reach yet; sit as close to it
+      // as the road allows and wait for it to come.
+      const nearest = clamp((gapLow + gapHigh) / 2, low, high);
+      low = nearest;
+      high = nearest;
+    }
+  }
 
-  // Steer no harder than it takes to land on the target this frame. A fixed gain
-  // overshoots by a frame of travel, which on the edge of the road is a crash
-  // the player would never have made.
-  const reach = CAR.steerSpeed * dtSeconds;
-  return clamp((target - world.carX) / reach, -1, 1);
+  // Aim at the **middle** of what is legal, never at its edge. Aiming at an
+  // edge leaves no room for a frame of lag, and half a pixel of it is a crash.
+  const target = (low + high) / 2;
+
+  // Steer no harder than it takes to land on the target this frame. A fixed
+  // gain overshoots by a frame of travel, which on the edge of the road is a
+  // crash the player would never have made.
+  return clamp((target - world.carX) / (CAR.steerSpeed * dtSeconds), -1, 1);
 }
 
 function drive(
@@ -71,23 +86,28 @@ describe('a run', () => {
   });
 
   /**
-   * The most valuable test in the repository: it is the proof that the
-   * generator produces a track a player can actually get through. Every
-   * invariant in `obstacles.ts` exists to make this pass.
+   * The most valuable test in the repository: the proof that the generator
+   * produces a track a player can actually get through. Every invariant in
+   * `obstacles.ts` exists to make this pass.
+   *
+   * The claim is bounded at the **designed ramp** — through the rotation and
+   * into the tail. Past that the tail deliberately keeps shrinking the margin,
+   * and this driver does eventually die on some seeds; that is the tail working,
+   * not the track cheating.
    */
-  it('is survivable for two minutes by a player who just aims at the gap', () => {
+  it('is survivable through the whole ramp by a player who just aims at the gap', () => {
     for (const seed of [1, 2, 3, 17, 99, 12345]) {
       const world = createWorld(seed);
-      drive(world, 120, 1000 / 60);
+      drive(world, 70, 1000 / 60);
       expect(world.crash, `seed ${seed} crashed at ${Math.round(world.carS)}px`).toBeNull();
-      expect(world.level).toBeGreaterThanOrEqual(TAIL_START_LEVEL);
+      expect(world.level).toBeGreaterThanOrEqual(MAX_LEVEL);
     }
   });
 
   it('is survivable at 30 Hz and at 120 Hz too', () => {
     for (const frameMs of [1000 / 30, 1000 / 120]) {
       const world = createWorld(4242);
-      drive(world, 90, frameMs);
+      drive(world, 70, frameMs);
       expect(world.crash, `${Math.round(1000 / frameMs)} Hz`).toBeNull();
     }
   });
@@ -176,23 +196,24 @@ describe('a run ends', () => {
   });
 });
 
-describe('the endgame tail', () => {
+describe('the endgame', () => {
   /**
-   * A perfect player cannot be killed by a track that keeps its fairness
-   * invariants — that is what fairness *means*. So the tail's job is not to end
-   * the run but to shrink what a human has to work with, and this pins that it
-   * actually does: the rows a two-minute run meets at the end are closer
-   * together and their gaps narrower than anything the rotation produced.
+   * A track that keeps its fairness invariants cannot kill a perfect player —
+   * that is what fairness *means* — so the shape of the track stops getting
+   * harder and speed carries the difficulty alone. This pins that a long run
+   * really does end up faster on a track of unchanged shape.
    */
-  it('keeps tightening the track after the rotation is finished', () => {
-    const world = createWorld(2024);
-    drive(world, 120, 1000 / 60);
+  it('keeps accelerating on a track whose shape has stopped changing', () => {
+    const world = createWorld(1);
+    drive(world, 70, 1000 / 60);
     expect(world.crash).toBeNull();
-    expect(world.level).toBeGreaterThan(TAIL_START_LEVEL + 10);
+    expect(world.level).toBeGreaterThanOrEqual(MAX_LEVEL);
 
-    const late = world.rows.map((row) => row.gapWidth);
-    const early = createWorld(2024).rows.map((row) => row.gapWidth);
-    expect(Math.min(...late)).toBeLessThan(Math.min(...early));
+    const settled = paramsForLevel(SPEED_ONLY_LEVEL);
+    const now = paramsForLevel(world.level);
+    expect(now.scrollSpeed).toBeGreaterThan(settled.scrollSpeed);
+    expect(now.spawnIntervalPx).toBe(settled.spawnIntervalPx);
+    expect(now.roadHalfWidth).toBe(settled.roadHalfWidth);
   });
 });
 

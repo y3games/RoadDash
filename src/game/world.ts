@@ -12,7 +12,7 @@ import { CAR, LAYOUT, MOTION, OBSTACLES, TRACK } from './config';
 import { carRect, hitObstacle, isOffRoad } from './collision';
 import type { SteerBounds } from './input';
 import { DIFFICULTY } from './config';
-import { axisRaisedAt, levelFor, paramsForLevel, pointsFor } from './difficulty';
+import { axisForLevel, levelFor, paramsForLevel, pointsFor } from './difficulty';
 import type { Obstacle, ObstacleRow } from './obstacles';
 import { CROSSING_HALF_LENGTH, placeRow } from './obstacles';
 import type { Random } from './random';
@@ -183,7 +183,7 @@ export function stepWorld(world: WorldState, dtSeconds: number, steer: number): 
   if (level === world.level) return result(null);
 
   world.level = level;
-  return result({ level, axis: axisRaisedAt(level) });
+  return result({ level, axis: axisForLevel(level) });
 }
 
 /** The score as the player sees it. */
