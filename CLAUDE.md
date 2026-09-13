@@ -52,6 +52,9 @@ scene; that is the one change that makes the fairness claim untestable.
   stays interactive while the world is frozen.
 - `src/services/ScoreService.ts` — the persistence boundary. Adding a leaderboard later means one
   new implementation plus the single injection line in `main.ts`.
+- `src/services/Prefs.ts` — per-game choices (car colour, muted), guarded like every other storage
+  access. `src/services/Sfx.ts` — three sounds, synthesised at runtime; no audio files ship, and a
+  browser without Web Audio gets an object whose methods do nothing.
 
 Everything is in **(x, s) space** — x across the road, s along it. Screen y exists only at draw
 time (`carScreenY - (s - carS)`), so collision is independent of where the car sits on screen.
@@ -103,6 +106,14 @@ These cost real debugging time. Do not reintroduce them.
 - **The touch strip is an affordance, not a control.** Steering works from anywhere on the screen;
   the strip marks where a thumb goes without covering the car or the road ahead. It is drawn only
   when `game.device.input.touch` is true.
+- **Do not centre the canvas twice.** Phaser's `autoCenter: CENTER_BOTH` writes margins onto the
+  canvas from the parent's size; `#game` centring it again with flexbox applied both and pushed the
+  canvas right and down by half the leftover space. The CSS keeps `#game` a plain block.
+- **Audio needs a gesture.** An AudioContext made before one starts suspended and every sound is
+  dropped in silence, so GameScene calls `sfx.unlock()` from the first pointer and key event.
+- **A near miss makes a sound; an ordinary pass does not.** At speed three rows a second go by, and
+  a noise for each is just noise — `CAR.squeezePx` is the threshold that makes the sound mean
+  something.
 - **Clamp the frame delta and substep by distance.** `MOTION.maxFrameMs` stops a tab switch from
   teleporting the car; `MOTION.maxSubStepPx` is what makes tunnelling impossible rather than
   unlikely. Both are pinned by `tests/config.test.ts`.

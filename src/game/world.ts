@@ -51,14 +51,23 @@ export interface WorldState {
   /** Where the next row goes. Advances by the spawn interval at that distance. */
   nextRowS: number;
   prevGapCenter: number | null;
+  /** Distance of the last row the car has fully cleared; -1 before the first. */
+  lastPassedS: number;
   readonly random: Random;
 }
 
 export interface StepResult {
   /** Set on the step that crossed into a new level, so the HUD can announce it. */
   readonly levelUp: LevelUp | null;
+  /** Set on the step the car cleared a row, with the room it had to spare. */
+  readonly passed: Passed | null;
   readonly crash: CrashReason | null;
   readonly score: number;
+}
+
+export interface Passed {
+  /** Px between the car's side and the nearer edge of the gap it went through. */
+  readonly clearance: number;
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -111,6 +120,7 @@ export function createWorld(seed: number): WorldState {
     // readable instead of an immediate dodge.
     nextRowS: DIFFICULTY.base.spawnIntervalPx,
     prevGapCenter: null,
+    lastPassedS: -1,
     random: mulberry32(seed),
   };
   generateAhead(world);
@@ -137,8 +147,9 @@ function firstHit(world: WorldState, car: ReturnType<typeof carRect>): Obstacle 
  * thinnest obstacle is deep.
  */
 export function stepWorld(world: WorldState, dtSeconds: number, steer: number): StepResult {
-  const result = (levelUp: LevelUp | null): StepResult => ({
+  const result = (levelUp: LevelUp | null, passed: Passed | null = null): StepResult => ({
     levelUp,
+    passed,
     crash: world.crash,
     score: currentScore(world),
   });
@@ -177,13 +188,41 @@ export function stepWorld(world: WorldState, dtSeconds: number, steer: number): 
     }
   }
 
+  const passed = takePassed(world);
   prune(world);
 
   const level = levelFor(world.carS);
-  if (level === world.level) return result(null);
+  if (level === world.level) return result(null, passed);
 
   world.level = level;
-  return result({ level, axis: axisForLevel(level) });
+  return result({ level, axis: axisForLevel(level) }, passed);
+}
+
+/**
+ * The row the car has just cleared, if any, and how much room it had.
+ *
+ * Reported rather than merely counted because "that was close" is the one thing
+ * the game cannot show the player: the moment is behind them by the time they
+ * could look. A sound can say it while it still means something.
+ */
+function takePassed(world: WorldState): Passed | null {
+  const tail = world.carS - CAR.length / 2;
+  let cleared: ObstacleRow | null = null;
+
+  for (const row of world.rows) {
+    if (row.s <= world.lastPassedS) continue;
+    if (row.s + OBSTACLES.rowLength / 2 >= tail) break;
+    cleared = row;
+  }
+  if (cleared === null) return null;
+
+  world.lastPassedS = cleared.s;
+  const half = CAR.width / 2;
+  const clearance = Math.min(
+    world.carX - (cleared.gapCenter - cleared.gapWidth / 2 + half),
+    cleared.gapCenter + cleared.gapWidth / 2 - half - world.carX,
+  );
+  return { clearance: Math.max(clearance, 0) };
 }
 
 /** The score as the player sees it. */

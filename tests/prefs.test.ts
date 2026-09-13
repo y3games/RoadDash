@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { CAR_COLORS, DEFAULT_CAR_COLOR } from '../src/game/config';
-import { CarStore, toCarColor } from '../src/services/CarStore';
+import { Prefs, toCarColor } from '../src/services/Prefs';
 
 /** Minimal localStorage stand-in; vitest runs in node, which has no DOM. */
 function fakeStorage() {
@@ -37,22 +37,34 @@ describe('toCarColor', () => {
   });
 });
 
-describe('CarStore', () => {
-  it('keeps the choice under a key of its own game', () => {
-    new CarStore('roaddash').save('red');
+describe('Prefs', () => {
+  it('keeps each choice under a key of its own game', () => {
+    const prefs = new Prefs('roaddash');
+    prefs.saveCarColor('red');
+    prefs.saveMuted(true);
     expect(storage.store.get('roaddash.car')).toBe('red');
+    expect(storage.store.get('roaddash.muted')).toBe('1');
   });
 
   it('reads back what it saved', () => {
-    const store = new CarStore('roaddash');
-    expect(store.read()).toBe(DEFAULT_CAR_COLOR);
-    store.save('black');
-    expect(store.read()).toBe('black');
+    const prefs = new Prefs('roaddash');
+    expect(prefs.carColor()).toBe(DEFAULT_CAR_COLOR);
+    prefs.saveCarColor('black');
+    expect(prefs.carColor()).toBe('black');
+  });
+
+  it('leaves sound on until it is turned off', () => {
+    const prefs = new Prefs('roaddash');
+    expect(prefs.muted()).toBe(false);
+    prefs.saveMuted(true);
+    expect(prefs.muted()).toBe(true);
+    prefs.saveMuted(false);
+    expect(prefs.muted()).toBe(false);
   });
 
   it('rejects a game id that is not a slug', () => {
-    expect(() => new CarStore('RoadDash')).toThrow();
-    expect(() => new CarStore('')).toThrow();
+    expect(() => new Prefs('RoadDash')).toThrow();
+    expect(() => new Prefs('')).toThrow();
   });
 
   it('survives storage that throws', () => {
@@ -66,8 +78,10 @@ describe('CarStore', () => {
         throw new Error('denied');
       },
     });
-    const store = new CarStore('roaddash');
-    expect(() => store.save('blue')).not.toThrow();
-    expect(store.read()).toBe(DEFAULT_CAR_COLOR);
+    const prefs = new Prefs('roaddash');
+    expect(() => prefs.saveCarColor('blue')).not.toThrow();
+    expect(() => prefs.saveMuted(true)).not.toThrow();
+    expect(prefs.carColor()).toBe(DEFAULT_CAR_COLOR);
+    expect(prefs.muted()).toBe(false);
   });
 });

@@ -200,6 +200,8 @@ export const CAR = {
   pointerRangePx: 60,
   /** Radians the sprite leans into a turn. Cosmetic only. */
   leanRad: 0.18,
+  /** Px of room to spare below which passing a row counts as a near miss. */
+  squeezePx: 26,
 } as const;
 
 export const TRACK = {
