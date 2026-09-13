@@ -5,19 +5,20 @@ import { CAR_COLORS, DEFAULT_CAR_COLOR } from '../game/config';
 const GAME_ID_PATTERN = /^[a-z0-9-]+$/;
 
 /**
- * Which car the player drives, remembered between runs.
+ * What the player has chosen, remembered between runs.
  *
- * A preference, not identity: it is stored per game under `<gameId>.car` rather
+ * Preferences, not identity: they are stored per game under `<gameId>.*` rather
  * than in the origin-wide `player` cookie, because every game on this origin
- * shares that cookie and only this one has cars in it.
+ * shares that cookie and only this one has cars and engine noise in it.
  *
  * Every access is guarded — private browsing, disabled site data and embedded
  * contexts can all make localStorage throw rather than return null. A storage
  * failure must never break the game, so a read that fails falls back to the
- * default colour and a write that fails is simply forgotten.
+ * default and a write that fails is simply forgotten.
  */
-export class CarStore {
-  private readonly key: string;
+export class Prefs {
+  private readonly carKey: string;
+  private readonly mutedKey: string;
 
   constructor(gameId: string) {
     if (!GAME_ID_PATTERN.test(gameId)) {
@@ -26,20 +27,38 @@ export class CarStore {
           '(lowercase letters, digits and hyphens).',
       );
     }
-    this.key = `${gameId}.car`;
+    this.carKey = `${gameId}.car`;
+    this.mutedKey = `${gameId}.muted`;
   }
 
-  read(): CarColorId {
+  carColor(): CarColorId {
+    return toCarColor(this.read(this.carKey));
+  }
+
+  saveCarColor(color: CarColorId): void {
+    this.write(this.carKey, color);
+  }
+
+  /** Sound is on until the player turns it off. */
+  muted(): boolean {
+    return this.read(this.mutedKey) === '1';
+  }
+
+  saveMuted(muted: boolean): void {
+    this.write(this.mutedKey, muted ? '1' : '0');
+  }
+
+  private read(key: string): string | null {
     try {
-      return toCarColor(localStorage.getItem(this.key));
+      return localStorage.getItem(key);
     } catch {
-      return DEFAULT_CAR_COLOR;
+      return null;
     }
   }
 
-  save(color: CarColorId): void {
+  private write(key: string, value: string): void {
     try {
-      localStorage.setItem(this.key, color);
+      localStorage.setItem(key, value);
     } catch {
       // Storage unavailable — the choice still applies to this session.
     }

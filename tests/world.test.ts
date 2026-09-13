@@ -217,6 +217,63 @@ describe('the endgame', () => {
   });
 });
 
+describe('clearing a row', () => {
+  /**
+   * The one thing the game cannot show the player: by the time they could look
+   * at how close that was, it is behind them. So the world reports it and the
+   * sound says it while it still means something.
+   */
+  it('is reported once per row, with the room that was left', () => {
+    const world = createWorld(21);
+    const dt = 1 / 60;
+    let passes = 0;
+    let tightest = Number.POSITIVE_INFINITY;
+
+    for (let i = 0; i < 60 * 30 && world.crash === null; i += 1) {
+      const { passed } = stepWorld(world, dt, autopilot(world, dt));
+      if (passed === null) continue;
+      passes += 1;
+      tightest = Math.min(tightest, passed.clearance);
+      expect(passed.clearance).toBeGreaterThanOrEqual(0);
+      // Half a gap minus half a car is the most room a row can leave.
+      expect(passed.clearance).toBeLessThan(LAYOUT.width / 2);
+    }
+
+    // Rows come every few hundred px; a 30 s run must have cleared plenty.
+    expect(passes).toBeGreaterThan(20);
+    expect(tightest).toBeLessThan(LAYOUT.width / 2);
+  });
+
+  it('counts every row exactly once', () => {
+    const world = createWorld(22);
+    const dt = 1 / 60;
+    const seen: number[] = [];
+
+    for (let i = 0; i < 60 * 20 && world.crash === null; i += 1) {
+      const before = world.lastPassedS;
+      const { passed } = stepWorld(world, dt, autopilot(world, dt));
+      if (passed !== null) {
+        expect(world.lastPassedS).toBeGreaterThan(before);
+        seen.push(world.lastPassedS);
+      }
+    }
+
+    expect(seen).toEqual([...new Set(seen)]);
+    expect(seen).toEqual([...seen].sort((a, b) => a - b));
+  });
+
+  it('says nothing about the row that ended the run', () => {
+    const world = createWorld(3);
+    stepWorld(world, 1 / 60, 1);
+    const firstRow = world.rows.find((row) => row.s > world.carS)!;
+    world.carX = firstRow.obstacles[0].x;
+
+    const { passed, crash } = stepWorld(world, 2, 0);
+    expect(crash).toBe('obstacle');
+    expect(passed).toBeNull();
+  });
+});
+
 describe('the score', () => {
   it('counts up from zero and stays whole', () => {
     const world = createWorld(31);

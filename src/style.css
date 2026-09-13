@@ -16,12 +16,23 @@ body {
   overscroll-behavior: none;
 }
 
+/*
+ * No flex centring here on purpose.
+ *
+ * Phaser's `autoCenter: CENTER_BOTH` centres the canvas itself by writing
+ * margins onto it, computed from this element's size. Centring it here as well
+ * applies both, and the canvas ends up pushed right and down by half the
+ * leftover space instead of sitting in the middle.
+ */
 #game {
   width: 100%;
   height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+}
+
+/* Inline elements sit on a text baseline, which leaves a few px under the
+   canvas and throws the vertical centring off by that much. */
+#game canvas {
+  display: block;
 }
 
 /* Stop the browser from turning steering drags into scrolls or text selection. */

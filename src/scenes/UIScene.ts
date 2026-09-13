@@ -2,9 +2,10 @@ import Phaser from 'phaser';
 
 import type { CarColorId, DifficultyAxis } from '../game/config';
 import { CAR, CAR_COLORS, COLORS, DEFAULT_CAR_COLOR, LAYOUT, TOUCH_ZONE } from '../game/config';
-import type { CarStore } from '../services/CarStore';
 import type { Player } from '../services/player';
+import type { Prefs } from '../services/Prefs';
 import type { ScoreService } from '../services/ScoreService';
+import type { Sfx } from '../services/Sfx';
 import { renamePlayer } from '../ui/nameGate';
 import { carTextureKey } from './BootScene';
 import type { GameOverPayload } from './GameScene';
@@ -94,6 +95,8 @@ export class UIScene extends Phaser.Scene {
       })
       .setOrigin(1, 0);
 
+    this.drawSoundToggle();
+
     this.startScreen = [];
     this.drawTouchZone();
     this.drawCarPicker();
@@ -139,6 +142,44 @@ export class UIScene extends Phaser.Scene {
     return this.registry.get('player') as Player | undefined;
   }
 
+  /**
+   * Mute, in the corner and remembered.
+   *
+   * `pointerdown` and an input lock, like every other button up here: the world
+   * starts on the first steering input, and a tap is one.
+   */
+  private drawSoundToggle(): void {
+    const prefs = this.registry.get('prefs') as Prefs | undefined;
+    let muted = prefs?.muted() ?? false;
+
+    const label = this.add
+      .text(LAYOUT.width - 24, 56, muted ? '소리 꺼짐' : '소리 켜짐', {
+        fontFamily: FONT,
+        fontSize: '14px',
+        color: muted ? '#ffffff66' : '#ffffffaa',
+      })
+      .setOrigin(1, 0)
+      .setInteractive({ useHandCursor: true });
+
+    const game = this.scene.get('GameScene');
+    label.on('pointerdown', () => {
+      game.events.emit(UiEvents.inputLock, true);
+      muted = !muted;
+      prefs?.saveMuted(muted);
+
+      const sfx = this.registry.get('sfx') as Sfx | undefined;
+      sfx?.unlock();
+      sfx?.setMuted(muted);
+      // Play something on the way *on*, so the toggle proves itself.
+      if (!muted) sfx?.levelUp();
+
+      label.setText(muted ? '소리 꺼짐' : '소리 켜짐');
+      label.setColor(muted ? '#ffffff66' : '#ffffffaa');
+    });
+    label.on('pointerup', () => game.events.emit(UiEvents.inputLock, false));
+    label.on('pointerout', () => game.events.emit(UiEvents.inputLock, false));
+  }
+
   /** Phaser knows whether this browser reports touch; the strip is for those. */
   private isTouch(): boolean {
     return this.sys.game.device.input.touch;
@@ -169,17 +210,30 @@ export class UIScene extends Phaser.Scene {
     // hue with no error at all.
     band.setStrokeStyle(1, COLORS.touchZone, TOUCH_ZONE.borderAlpha);
 
-    for (const [x, glyph] of [
-      [56, '‹'],
-      [LAYOUT.width - 56, '›'],
-    ] as const) {
-      this.add
-        .text(x, top + height / 2, glyph, {
-          fontFamily: FONT,
-          fontSize: '34px',
-          color: '#ffffff55',
-        })
-        .setOrigin(0.5);
+    this.drawDragArrow(top + height * 0.62);
+  }
+
+  /** A ←——→ across the strip: what the strip is *for*, without words. */
+  private drawDragArrow(y: number): void {
+    const half = 78;
+    const head = 13;
+    const center = LAYOUT.width / 2;
+    const g = this.add.graphics();
+
+    g.lineStyle(3, COLORS.touchZone, 0.38);
+    g.lineBetween(center - half, y, center + half, y);
+
+    g.fillStyle(COLORS.touchZone, 0.38);
+    for (const direction of [-1, 1]) {
+      const tip = center + direction * (half + 2);
+      g.fillTriangle(
+        tip,
+        y,
+        tip - direction * head,
+        y - head * 0.62,
+        tip - direction * head,
+        y + head * 0.62,
+      );
     }
   }
 
@@ -192,8 +246,8 @@ export class UIScene extends Phaser.Scene {
    * cannot also launch the run.
    */
   private drawCarPicker(): void {
-    const store = this.registry.get('carStore') as CarStore | undefined;
-    let chosen: CarColorId = store?.read() ?? DEFAULT_CAR_COLOR;
+    const prefs = this.registry.get('prefs') as Prefs | undefined;
+    let chosen: CarColorId = prefs?.carColor() ?? DEFAULT_CAR_COLOR;
 
     const label = this.add
       .text(LAYOUT.width / 2, LAYOUT.height / 2 + 44, '차 색상', {
@@ -226,7 +280,7 @@ export class UIScene extends Phaser.Scene {
         game.events.emit(UiEvents.inputLock, true);
 
         chosen = color.id;
-        store?.save(chosen);
+        prefs?.saveCarColor(chosen);
         for (const [id, other] of rings) other.setStrokeStyle(2, 0xffc400, id === chosen ? 1 : 0);
         game.events.emit(UiEvents.carColor, chosen);
       });

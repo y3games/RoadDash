@@ -6,9 +6,10 @@ import { steerInput } from '../game/input';
 import type { ObstacleKind } from '../game/obstacles';
 import type { CrashReason, WorldState } from '../game/world';
 import { createWorld, currentScore, drivableBounds, stepWorld } from '../game/world';
-import type { CarStore } from '../services/CarStore';
 import type { Player } from '../services/player';
+import type { Prefs } from '../services/Prefs';
 import type { ScoreService } from '../services/ScoreService';
+import type { Sfx } from '../services/Sfx';
 import { carTextureKey, obstacleTextureKey } from './BootScene';
 
 /** Events this scene emits for UIScene to render. */
@@ -77,8 +78,8 @@ export class GameScene extends Phaser.Scene {
     this.cameras.main.setBackgroundColor(COLORS.background);
     this.road = this.add.graphics().setDepth(-10);
 
-    const carStore = this.registry.get('carStore') as CarStore | undefined;
-    const color: CarColorId = carStore?.read() ?? DEFAULT_CAR_COLOR;
+    const prefs = this.registry.get('prefs') as Prefs | undefined;
+    const color: CarColorId = prefs?.carColor() ?? DEFAULT_CAR_COLOR;
     this.car = this.add
       .image(this.world.carX, LAYOUT.carScreenY, carTextureKey(color))
       .setDepth(10);
@@ -89,8 +90,11 @@ export class GameScene extends Phaser.Scene {
     // Without this the arrow keys scroll the page instead of steering, and
     // SPACE scrolls instead of restarting (UIScene listens for it).
     this.input.keyboard?.addCapture('LEFT,RIGHT,A,D,SPACE,ENTER');
+    this.input.keyboard?.on('keydown', () => this.sfx()?.unlock());
 
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
+      // A gesture is what lets the browser make a sound at all.
+      this.sfx()?.unlock();
       if (this.pointerId !== null) return;
       this.pointerId = p.id;
       this.pointerX = p.x;
@@ -157,7 +161,11 @@ export class GameScene extends Phaser.Scene {
       const result = stepWorld(this.world, dt, steer);
 
       this.events.emit(GameEvents.score, result.score);
-      if (result.levelUp !== null) this.events.emit(GameEvents.levelUp, result.levelUp);
+      if (result.levelUp !== null) {
+        this.events.emit(GameEvents.levelUp, result.levelUp);
+        if (result.levelUp.axis !== null) this.sfx()?.levelUp();
+      }
+      if (result.passed !== null) this.reportSqueeze(result.passed.clearance);
       if (this.world.started) this.events.emit(GameEvents.started);
     }
 
@@ -167,6 +175,21 @@ export class GameScene extends Phaser.Scene {
     this.car.setRotation(steer * CAR.leanRad);
 
     if (this.world.crash !== null) this.endRun(this.world.crash);
+  }
+
+  private sfx(): Sfx | undefined {
+    return this.registry.get('sfx') as Sfx | undefined;
+  }
+
+  /**
+   * A near miss gets a sound; a comfortable pass does not.
+   *
+   * Three rows a second go by at speed, and a noise for every one of them is
+   * noise. The threshold is what makes the sound mean "that was close".
+   */
+  private reportSqueeze(clearance: number): void {
+    if (clearance > CAR.squeezePx) return;
+    this.sfx()?.squeeze(1 - clearance / CAR.squeezePx);
   }
 
   /** Track distance to screen y. The car never moves up or down the screen. */
@@ -260,6 +283,7 @@ export class GameScene extends Phaser.Scene {
     this.over = true;
     this.cameras.main.shake(220, 0.012);
     this.car.setTintFill(0xff5252);
+    this.sfx()?.crash();
 
     const score = currentScore(this.world);
     const service = this.registry.get('scoreService') as ScoreService | undefined;
