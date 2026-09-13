@@ -1,9 +1,13 @@
 import Phaser from 'phaser';
 
-import { CAR, COLORS, OBSTACLES } from '../game/config';
+import type { CarColorId } from '../game/config';
+import { CAR, CAR_COLORS, COLORS, OBSTACLES } from '../game/config';
 import type { ObstacleKind } from '../game/obstacles';
 
-export const CAR_TEXTURE = 'car';
+/** Texture key for a car colour. One texture per colour, all drawn at boot. */
+export function carTextureKey(color: CarColorId): string {
+  return `car-${color}`;
+}
 
 /** Texture key for an obstacle kind. Generated at runtime — no files ship. */
 export function obstacleTextureKey(kind: ObstacleKind): string {
@@ -23,18 +27,22 @@ export class BootScene extends Phaser.Scene {
   }
 
   create(): void {
-    this.drawCar();
+    for (const color of CAR_COLORS) this.drawCar(color);
     this.drawCone();
     this.drawBarrier();
     this.scene.start('GameScene');
   }
 
-  private drawCar(): void {
+  private drawCar(color: (typeof CAR_COLORS)[number]): void {
     const { width, length } = CAR;
     const g = this.make.graphics({ x: 0, y: 0 }, false);
 
-    g.fillStyle(COLORS.car, 1);
+    g.fillStyle(color.body, 1);
     g.fillRoundedRect(0, 0, width, length, 7);
+    // The outline is what keeps a dark car readable against dark asphalt, so it
+    // is drawn for every colour rather than only the ones that need it.
+    g.lineStyle(2, color.trim, 1);
+    g.strokeRoundedRect(1, 1, width - 2, length - 2, 6);
     // Windscreen toward the top: the car drives up the screen, and without a
     // front the sprite reads as a brick.
     g.fillStyle(COLORS.carWindow, 1);
@@ -43,7 +51,7 @@ export class BootScene extends Phaser.Scene {
     g.fillStyle(0x000000, 0.25);
     g.fillRect(0, length * 0.42, width, length * 0.06);
 
-    g.generateTexture(CAR_TEXTURE, width, length);
+    g.generateTexture(carTextureKey(color.id), width, length);
     g.destroy();
   }
 

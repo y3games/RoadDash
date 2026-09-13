@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { DifficultyParamKey, RotationAxis, TailAxis } from '../src/game/config';
+import type { RotationAxis } from '../src/game/config';
 import {
   AXIS_PARAMS,
   DIFFICULTY,
@@ -8,24 +8,26 @@ import {
   EARLY,
   SAFE_GAP,
   SCORE,
-  TAIL_AXES,
-  TAIL_AXIS_PARAMS,
+  SPEED_CEILING,
 } from '../src/game/config';
 import {
   axisForLevel,
-  axisRaisedAt,
   distanceForLevel,
   isMaxedOut,
   levelFor,
+  MAX_LEVEL,
   PARAM_KEYS,
   paramsForLevel,
   pointsFor,
   scoreMultiplier,
-  TAIL_START_LEVEL,
+  SPEED_ONLY_LEVEL,
 } from '../src/game/difficulty';
 
-/** The last level of the rotation — the one that caps its final axis. */
-const MAXED_LEVEL = TAIL_START_LEVEL - 1;
+/** The last level that still raises something. */
+const MAXED_LEVEL = MAX_LEVEL - 1;
+
+/** The axes whose floors fairness sets, so they stop early by design. */
+const GEOMETRY: readonly RotationAxis[] = DIFFICULTY_AXES.filter((axis) => axis !== 'speed');
 
 describe('levelFor', () => {
   it('starts at level 1 and treats a boundary as the new level', () => {
@@ -59,16 +61,6 @@ describe('the rotating ramp', () => {
     expect(axisForLevel(1)).toBeNull();
   });
 
-  it('finishes the rotation before the tail begins', () => {
-    // The tail replaces a level's bump rather than following it, so starting it
-    // one level early silently costs the rotation its last step.
-    expect(paramsForLevel(MAXED_LEVEL)).toMatchObject(
-      Object.fromEntries(PARAM_KEYS.map((key) => [key, DIFFICULTY.cap[key]])),
-    );
-    expect(isMaxedOut(MAXED_LEVEL - 1)).toBe(false);
-    expect(isMaxedOut(MAXED_LEVEL)).toBe(true);
-  });
-
   it('takes the axes in the documented rotation', () => {
     expect([2, 3, 4, 5, 6, 7, 8, 9].map(axisForLevel)).toEqual([
       'speed',
@@ -93,54 +85,44 @@ describe('the rotating ramp', () => {
       const after = paramsForLevel(level + 1);
       const changed = PARAM_KEYS.filter((key) => before[key] !== after[key]);
       const axis = axisForLevel(level + 1) as RotationAxis;
-      const allowed: readonly DifficultyParamKey[] = AXIS_PARAMS[axis];
       for (const key of changed) {
-        expect(allowed, `level ${level + 1} changed ${key}`).toContain(key);
+        expect(AXIS_PARAMS[axis], `level ${level + 1} changed ${key}`).toContain(key);
       }
-    }
-  });
-
-  it('moves the axis it names until that axis is capped', () => {
-    for (let level = 1; level < MAXED_LEVEL; level += 1) {
-      const before = paramsForLevel(level);
-      const after = paramsForLevel(level + 1);
-      const axis = axisForLevel(level + 1) as RotationAxis;
-      const atCap = AXIS_PARAMS[axis].every((key) => before[key] === DIFFICULTY.cap[key]);
-      if (atCap) continue;
-      expect(
-        AXIS_PARAMS[axis].some((key) => before[key] !== after[key]),
-        `level ${level + 1} should have moved ${axis}`,
-      ).toBe(true);
     }
   });
 
   /**
    * The toast is the only thing that tells the player what changed. Announcing
-   * an axis that did not move teaches them to stop reading it, so the HUD asks
-   * `axisRaisedAt()` and it must go quiet exactly when the ramp does.
+   * an axis that did not move teaches them to stop reading it, so a level-up
+   * either moved the axis it names or names nothing at all.
    */
   it('never names an axis that did not actually move', () => {
-    for (let level = 1; level <= 200; level += 1) {
-      const axis = axisRaisedAt(level);
+    for (let level = 2; level <= 200; level += 1) {
+      const axis = axisForLevel(level);
       if (axis === null) continue;
-      const before = paramsForLevel(level - 1 || 1);
+      const before = paramsForLevel(level - 1);
       const after = paramsForLevel(level);
-      const keys: readonly DifficultyParamKey[] =
-        axis in AXIS_PARAMS
-          ? AXIS_PARAMS[axis as RotationAxis]
-          : TAIL_AXIS_PARAMS[axis as TailAxis];
       expect(
-        keys.some((key) => before[key] !== after[key]),
-        `level ${level}`,
+        AXIS_PARAMS[axis].some((key) => before[key] !== after[key]),
+        `level ${level} named ${axis}`,
       ).toBe(true);
     }
   });
 
-  it('goes quiet once even the tail is finished', () => {
-    expect(axisRaisedAt(TAIL_START_LEVEL)).not.toBeNull();
-    // Far past both tail caps, a level-up changes nothing and says nothing.
-    expect(axisRaisedAt(150)).toBeNull();
-    expect(axisForLevel(150)).not.toBeNull();
+  it('goes quiet once the ramp is finished', () => {
+    expect(axisForLevel(MAXED_LEVEL)).not.toBeNull();
+    expect(axisForLevel(MAX_LEVEL)).toBeNull();
+    expect(axisForLevel(150)).toBeNull();
+  });
+
+  it('never hands a capped axis back to the rotation', () => {
+    // Speed carries on past its rotation cap, and a rotation bump would clamp
+    // it back down — one level up, one level down, for ever.
+    for (let level = SPEED_ONLY_LEVEL; level < 120; level += 1) {
+      expect(paramsForLevel(level + 1).scrollSpeed).toBeGreaterThanOrEqual(
+        paramsForLevel(level).scrollSpeed,
+      );
+    }
   });
 
   it('is monotone in every axis', () => {
@@ -158,15 +140,15 @@ describe('the rotating ramp', () => {
   it('reaches every cap exactly and never passes one', () => {
     for (let level = 1; level <= 200; level += 1) {
       const params = paramsForLevel(level);
-      expect(params.scrollSpeed).toBeLessThanOrEqual(DIFFICULTY.cap.scrollSpeed);
       expect(params.curveAmplitude).toBeLessThanOrEqual(DIFFICULTY.cap.curveAmplitude);
       expect(params.curveFrequency).toBeLessThanOrEqual(DIFFICULTY.cap.curveFrequency);
       expect(params.roadHalfWidth).toBeGreaterThanOrEqual(DIFFICULTY.cap.roadHalfWidth);
-      // Rows keep closing up in the tail, so this floor is the tail's, not the
-      // rotation's.
-      expect(params.spawnIntervalPx).toBeGreaterThanOrEqual(DIFFICULTY.tailCap.spawnIntervalPx);
-      expect(params.gapSlackRatio).toBeGreaterThanOrEqual(DIFFICULTY.tailCap.gapSlackRatio);
+      expect(params.spawnIntervalPx).toBeGreaterThanOrEqual(DIFFICULTY.cap.spawnIntervalPx);
+      // Speed is the exception: it keeps rising past its rotation cap, and
+      // stops only where the road stops being followable.
+      expect(params.scrollSpeed).toBeLessThanOrEqual(SPEED_CEILING);
     }
+    expect(paramsForLevel(MAXED_LEVEL).scrollSpeed).toBe(SPEED_CEILING);
   });
 
   it('rejects a level that is not a positive integer', () => {
@@ -176,17 +158,17 @@ describe('the rotating ramp', () => {
   });
 
   /**
-   * The balance intent, as an executable claim: the rotation finishes around
-   * 65 seconds, which is what makes a good run land in the 60–120 s band the
-   * game was asked for. Retuning a step has to confront this number.
+   * The balance intent, as an executable claim. Retuning a step has to confront
+   * these two numbers.
    */
-  it('finishes the rotation between 55 and 90 seconds', () => {
-    let seconds = 0;
-    for (let level = 1; level <= MAXED_LEVEL; level += 1) {
-      seconds += DIFFICULTY.levelDistancePx / paramsForLevel(level).scrollSpeed;
-    }
-    expect(seconds).toBeGreaterThan(55);
-    expect(seconds).toBeLessThan(90);
+  it('settles the shape of the track inside the first minute', () => {
+    expect(secondsTo(SPEED_ONLY_LEVEL)).toBeGreaterThan(25);
+    expect(secondsTo(SPEED_ONLY_LEVEL)).toBeLessThan(60);
+  });
+
+  it('reaches its top speed between 45 and 90 seconds', () => {
+    expect(secondsTo(MAX_LEVEL)).toBeGreaterThan(45);
+    expect(secondsTo(MAX_LEVEL)).toBeLessThan(90);
   });
 
   it('derives its param keys from the axis table', () => {
@@ -196,34 +178,53 @@ describe('the rotating ramp', () => {
   });
 });
 
-describe('the tail', () => {
-  it('keeps tightening after the rotation is done', () => {
-    const capped = paramsForLevel(MAXED_LEVEL);
-    const late = paramsForLevel(MAXED_LEVEL + 30);
-    expect(late.gapSlackRatio).toBeLessThan(capped.gapSlackRatio);
-    expect(late.spawnIntervalPx).toBeLessThan(capped.spawnIntervalPx);
+describe('once the geometry is full', () => {
+  /**
+   * The shape of the track has a floor that fairness sets — a gap the car fits
+   * through, reachable by steering, on the road for the whole crossing — so it
+   * fills up early and stays. Speed is the only screw with anywhere left to go.
+   */
+  it('freezes every geometric axis', () => {
+    const settled = paramsForLevel(SPEED_ONLY_LEVEL);
+    for (const level of [SPEED_ONLY_LEVEL, MAX_LEVEL, MAX_LEVEL + 50]) {
+      const params = paramsForLevel(level);
+      expect(params.spawnIntervalPx, `level ${level}`).toBe(settled.spawnIntervalPx);
+      expect(params.roadHalfWidth, `level ${level}`).toBe(settled.roadHalfWidth);
+      expect(params.curveAmplitude, `level ${level}`).toBe(settled.curveAmplitude);
+      expect(params.curveFrequency, `level ${level}`).toBe(settled.curveFrequency);
+    }
   });
 
-  it('takes its two axes in rotation as well', () => {
-    expect(axisForLevel(TAIL_START_LEVEL)).toBe(TAIL_AXES[0]);
-    expect(axisForLevel(TAIL_START_LEVEL + 1)).toBe(TAIL_AXES[1]);
-    expect(axisForLevel(TAIL_START_LEVEL + 2)).toBe(TAIL_AXES[0]);
+  it('raises speed, and only speed, from there on', () => {
+    for (let level = SPEED_ONLY_LEVEL; level < MAX_LEVEL; level += 1) {
+      expect(axisForLevel(level), `level ${level}`).toBe('speed');
+    }
+    for (const axis of GEOMETRY) {
+      expect(AXIS_PARAMS[axis].length).toBeGreaterThan(0);
+    }
   });
 
-  it('leaves the rotation axes exactly where it found them', () => {
-    const capped = paramsForLevel(MAXED_LEVEL);
-    const late = paramsForLevel(MAXED_LEVEL + 60);
-    expect(late.scrollSpeed).toBe(capped.scrollSpeed);
-    expect(late.roadHalfWidth).toBe(capped.roadHalfWidth);
-    expect(late.curveAmplitude).toBe(capped.curveAmplitude);
+  it('keeps accelerating past the rotation cap, up to the ceiling', () => {
+    expect(paramsForLevel(SPEED_ONLY_LEVEL).scrollSpeed).toBeLessThan(SPEED_CEILING);
+    expect(paramsForLevel(MAX_LEVEL - 1).scrollSpeed).toBe(SPEED_CEILING);
+    expect(paramsForLevel(MAX_LEVEL + 40).scrollSpeed).toBe(SPEED_CEILING);
   });
 
-  it('stops at its own caps', () => {
-    const end = paramsForLevel(300);
-    expect(end.gapSlackRatio).toBe(DIFFICULTY.tailCap.gapSlackRatio);
-    expect(end.spawnIntervalPx).toBe(DIFFICULTY.tailCap.spawnIntervalPx);
+  it('stops there, because past it no line through the track exists', () => {
+    // The road drifts sideways at maxSlope * speed; above the ceiling that
+    // outruns the car and the run would end on geometry, not on a mistake.
+    expect(isMaxedOut(MAX_LEVEL - 1)).toBe(false);
+    expect(isMaxedOut(MAX_LEVEL)).toBe(true);
   });
 });
+
+function secondsTo(level: number): number {
+  let seconds = 0;
+  for (let l = 1; l < level; l += 1) {
+    seconds += DIFFICULTY.levelDistancePx / paramsForLevel(l).scrollSpeed;
+  }
+  return seconds;
+}
 
 describe('the beginner’s gap floor', () => {
   it('starts a full bonus above the safe minimum', () => {
@@ -260,6 +261,12 @@ describe('scoring', () => {
     const easy = pointsFor(DIFFICULTY.base.spawnIntervalPx, 1);
     const hard = pointsFor(DIFFICULTY.cap.spawnIntervalPx, MAXED_LEVEL);
     expect(hard).toBeGreaterThan(easy);
+  });
+
+  it('keeps rewarding the levels past the ramp', () => {
+    // Nothing rises after MAX_LEVEL, but the run is still getting longer and
+    // the multiplier is the only thing that says so.
+    expect(scoreMultiplier(MAX_LEVEL + 20)).toBeGreaterThan(scoreMultiplier(MAX_LEVEL));
   });
 
   it('rises with the level and never falls', () => {

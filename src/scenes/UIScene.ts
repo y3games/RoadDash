@@ -1,10 +1,12 @@
 import Phaser from 'phaser';
 
-import type { DifficultyAxis } from '../game/config';
-import { LAYOUT } from '../game/config';
+import type { CarColorId, DifficultyAxis } from '../game/config';
+import { CAR, CAR_COLORS, COLORS, DEFAULT_CAR_COLOR, LAYOUT, TOUCH_ZONE } from '../game/config';
+import type { CarStore } from '../services/CarStore';
 import type { Player } from '../services/player';
 import type { ScoreService } from '../services/ScoreService';
 import { renamePlayer } from '../ui/nameGate';
+import { carTextureKey } from './BootScene';
 import type { GameOverPayload } from './GameScene';
 import { GameEvents, UiEvents } from './GameScene';
 
@@ -17,8 +19,6 @@ const AXIS_LABEL: Readonly<Record<DifficultyAxis, string>> = {
   density: '장애물 증가',
   roadWidth: '도로 좁아짐',
   curve: '급커브',
-  gapWidth: '빈틈 좁아짐',
-  spacing: '장애물 빽빽해짐',
 };
 
 const CRASH_LABEL: Readonly<Record<GameOverPayload['reason'], string>> = {
@@ -36,6 +36,8 @@ interface LevelPayload {
  * inside it, so the game-over panel stays interactive while the world is frozen.
  */
 export class UIScene extends Phaser.Scene {
+  /** Everything that belongs to the pre-run screen: gone once the car moves. */
+  private startScreen: Phaser.GameObjects.GameObject[] = [];
   private scoreText!: Phaser.GameObjects.Text;
   private bestText!: Phaser.GameObjects.Text;
   private levelText!: Phaser.GameObjects.Text;
@@ -55,9 +57,15 @@ export class UIScene extends Phaser.Scene {
 
   create(): void {
     const game = this.scene.get('GameScene');
+    // scene.restart() reuses this instance, so every field is re-initialised
+    // here. Leaving `overlay` set from the previous run makes the guard in
+    // showGameOver() swallow the panel, and the second death of a session has
+    // no 다시 하기 button at all.
     this.best = 0;
     this.level = 1;
     this.restarting = false;
+    this.overlay = undefined;
+    this.toast = undefined;
 
     this.scoreText = this.add.text(24, 22, '0', {
       fontFamily: FONT,
@@ -86,13 +94,22 @@ export class UIScene extends Phaser.Scene {
       })
       .setOrigin(1, 0);
 
+    this.startScreen = [];
+    this.drawTouchZone();
+    this.drawCarPicker();
+
+    // The strip is where a thumb goes, so on a touch device the instruction
+    // belongs in it; with a keyboard it belongs under the car.
+    const touch = this.isTouch();
     this.hint = this.add
-      .text(LAYOUT.width / 2, LAYOUT.carScreenY + 70, '좌우로 조종하세요', {
-        fontFamily: FONT,
-        fontSize: '18px',
-        color: '#ffffffcc',
-      })
+      .text(
+        LAYOUT.width / 2,
+        touch ? this.touchZoneTop() + 44 : LAYOUT.carScreenY + 70,
+        touch ? '이 영역을 드래그해 조종하세요' : '← → 또는 A · D 로 조종하세요',
+        { fontFamily: FONT, fontSize: '17px', color: '#ffffffcc' },
+      )
       .setOrigin(0.5);
+    this.startScreen.push(this.hint);
 
     void this.loadBest();
 
@@ -101,7 +118,7 @@ export class UIScene extends Phaser.Scene {
       this.recordBest(score);
     };
     const onLevel = (payload: LevelPayload) => this.showLevel(payload);
-    const onStarted = () => this.hint.setVisible(false);
+    const onStarted = () => this.dismissStartScreen();
     const onGameOver = (payload: GameOverPayload) => this.showGameOver(payload);
 
     game.events.on(GameEvents.score, onScore);
@@ -120,6 +137,128 @@ export class UIScene extends Phaser.Scene {
 
   private player(): Player | undefined {
     return this.registry.get('player') as Player | undefined;
+  }
+
+  /** Phaser knows whether this browser reports touch; the strip is for those. */
+  private isTouch(): boolean {
+    return this.sys.game.device.input.touch;
+  }
+
+  private touchZoneTop(): number {
+    return LAYOUT.carScreenY + TOUCH_ZONE.topOffset;
+  }
+
+  /**
+   * The steering strip: a barely-there band across the bottom of a touch
+   * screen, below the car.
+   *
+   * Steering works from anywhere on the screen — this marks where to put a
+   * thumb so that it is not covering the car or the road ahead, which is what
+   * happens when someone drags in the middle of the screen. It stays visible
+   * during the run (the affordance is still true) while its label goes away.
+   */
+  private drawTouchZone(): void {
+    if (!this.isTouch()) return;
+
+    const top = this.touchZoneTop();
+    const height = LAYOUT.height - top;
+    const band = this.add
+      .rectangle(LAYOUT.width / 2, top + height / 2, LAYOUT.width, height, COLORS.touchZone)
+      .setAlpha(TOUCH_ZONE.fillAlpha);
+    // Alpha as the third argument. Packed into the colour it renders a wrong
+    // hue with no error at all.
+    band.setStrokeStyle(1, COLORS.touchZone, TOUCH_ZONE.borderAlpha);
+
+    for (const [x, glyph] of [
+      [56, '‹'],
+      [LAYOUT.width - 56, '›'],
+    ] as const) {
+      this.add
+        .text(x, top + height / 2, glyph, {
+          fontFamily: FONT,
+          fontSize: '34px',
+          color: '#ffffff55',
+        })
+        .setOrigin(0.5);
+    }
+  }
+
+  /**
+   * Pick a car before the run starts.
+   *
+   * It sits in the middle of the screen rather than in the touch strip: a tap
+   * down there is a steering input, and the world starts on the first one.
+   * Each swatch still locks input while it is pressed, so choosing a colour
+   * cannot also launch the run.
+   */
+  private drawCarPicker(): void {
+    const store = this.registry.get('carStore') as CarStore | undefined;
+    let chosen: CarColorId = store?.read() ?? DEFAULT_CAR_COLOR;
+
+    const label = this.add
+      .text(LAYOUT.width / 2, LAYOUT.height / 2 + 44, '차 색상', {
+        fontFamily: FONT,
+        fontSize: '15px',
+        color: '#ffffff88',
+      })
+      .setOrigin(0.5);
+    this.startScreen.push(label);
+
+    const gap = 62;
+    const left = LAYOUT.width / 2 - (gap * (CAR_COLORS.length - 1)) / 2;
+    const rings = new Map<CarColorId, Phaser.GameObjects.Rectangle>();
+
+    CAR_COLORS.forEach((color, index) => {
+      const x = left + index * gap;
+      const y = LAYOUT.height / 2 + 92;
+
+      const ring = this.add
+        .rectangle(x, y, CAR.width + 18, CAR.length + 14)
+        .setStrokeStyle(2, 0xffc400, color.id === chosen ? 1 : 0);
+      const swatch = this.add
+        .image(x, y, carTextureKey(color.id))
+        .setInteractive({ useHandCursor: true });
+
+      swatch.on('pointerdown', () => {
+        // GameScene starts the world on any steering input, and a tap on a
+        // swatch is one. Lock first, exactly as the rename button does.
+        const game = this.scene.get('GameScene');
+        game.events.emit(UiEvents.inputLock, true);
+
+        chosen = color.id;
+        store?.save(chosen);
+        for (const [id, other] of rings) other.setStrokeStyle(2, 0xffc400, id === chosen ? 1 : 0);
+        game.events.emit(UiEvents.carColor, chosen);
+      });
+      swatch.on('pointerup', () => {
+        this.scene.get('GameScene').events.emit(UiEvents.inputLock, false);
+      });
+      swatch.on('pointerout', () => {
+        this.scene.get('GameScene').events.emit(UiEvents.inputLock, false);
+      });
+
+      rings.set(color.id, ring);
+      this.startScreen.push(ring, swatch);
+    });
+  }
+
+  /** Fade the pre-run screen out the moment the car moves. */
+  private dismissStartScreen(): void {
+    if (this.startScreen.length === 0) return;
+    const targets = this.startScreen;
+    this.startScreen = [];
+
+    for (const object of targets) {
+      if ('disableInteractive' in object) (object as Phaser.GameObjects.Image).disableInteractive();
+    }
+    this.tweens.add({
+      targets,
+      alpha: 0,
+      duration: 260,
+      onComplete: () => {
+        for (const object of targets) object.destroy();
+      },
+    });
   }
 
   /** `이름 · 최고 N` — who is playing and what they have to beat. */
@@ -203,6 +342,8 @@ export class UIScene extends Phaser.Scene {
   }
 
   private showGameOver({ score, best, isNewBest, reason }: GameOverPayload): void {
+    // Only guards a second gameOver event within one run, never a later run:
+    // create() clears this.
     if (this.overlay !== undefined) return;
     this.best = Math.max(this.best, best);
     this.drawBest();

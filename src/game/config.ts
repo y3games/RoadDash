@@ -17,18 +17,16 @@ export const DIFFICULTY_AXES = ['speed', 'density', 'roadWidth', 'curve'] as con
 export type RotationAxis = (typeof DIFFICULTY_AXES)[number];
 
 /**
- * What keeps rising once the four rotation axes are all capped.
+ * The axes a level-up can move. There is no separate tail axis: once the
+ * geometry has given everything it can, **speed is the only thing left**.
  *
- * A flat endgame is the wrong shape for a high-score game: difficulty stops
- * inventing itself and the run becomes an endurance test. These two keep
- * shrinking the room for error — the gap the car threads and the time between
- * rows — taken in the same one-at-a-time rotation.
+ * That is not a stylistic choice. Every geometric screw has a floor set by
+ * fairness — a gap must stay wide enough to drive through, reachable by
+ * steering, and on the road for the whole crossing. Speed has no such floor
+ * until the road itself outruns the car, so it is the one axis that can keep
+ * going after the others have stopped.
  */
-export const TAIL_AXES = ['gapWidth', 'spacing'] as const;
-
-export type TailAxis = (typeof TAIL_AXES)[number];
-
-export type DifficultyAxis = RotationAxis | TailAxis;
+export type DifficultyAxis = RotationAxis;
 
 /**
  * Everything about the track that difficulty moves.
@@ -48,8 +46,6 @@ export interface DifficultyParams {
   readonly curveAmplitude: number;
   /** Radians of curve phase added per px of track. Higher is twistier. */
   readonly curveFrequency: number;
-  /** Fraction of the spare road width a gap may be widened by, at random. */
-  readonly gapSlackRatio: number;
   /** Px: no gap may be narrower than this. Decays to SAFE_GAP over the ramp. */
   readonly minGapWidth: number;
 }
@@ -76,12 +72,6 @@ export const AXIS_PARAMS = {
  */
 export type RotationParamKey = (typeof AXIS_PARAMS)[RotationAxis][number];
 
-/** Which param each tail axis moves, in the same shape as AXIS_PARAMS. */
-export const TAIL_AXIS_PARAMS: Readonly<Record<TailAxis, readonly DifficultyParamKey[]>> = {
-  gapWidth: ['gapSlackRatio'],
-  spacing: ['spawnIntervalPx'],
-} as const;
-
 /** The starting value of every param the level model moves. */
 type RampStart = Omit<DifficultyParams, 'minGapWidth'>;
 
@@ -106,20 +96,36 @@ export const DIFFICULTY = {
    * seconds — a quarter of the whole ramp — before the game posed a threat.
    */
   levelDistancePx: 1000,
+  /**
+   * Where the ramp starts.
+   *
+   * Not as gentle as it looks: the opening used to give 2.4 s of lookahead on a
+   * 336 px road with 1.6 s between rows, and a quarter of the whole ramp went by
+   * before the game asked anything. These numbers put the first row inside two
+   * seconds of reaction time and keep the ramp's shape — each axis still takes
+   * seven steps to reach its cap, which is what the step sizes below are
+   * derived from.
+   */
   base: {
-    scrollSpeed: 260,
-    spawnIntervalPx: 420,
-    roadHalfWidth: 168,
-    curveAmplitude: 52,
-    curveFrequency: 0.0042,
-    gapSlackRatio: 0.55,
+    scrollSpeed: 320,
+    spawnIntervalPx: 360,
+    roadHalfWidth: 155,
+    curveAmplitude: 60,
+    curveFrequency: 0.0048,
   },
+  /**
+   * How far one level-up moves an axis.
+   *
+   * The three geometric axes take **four** steps to reach their caps and are
+   * then finished — the shape of the track is settled inside the first forty
+   * seconds. Speed takes seven, and then keeps going alone (see SPEED_CEILING).
+   */
   step: {
-    scrollSpeed: 52,
-    spawnIntervalPx: 30,
-    roadHalfWidth: 10,
-    curveAmplitude: 12,
-    curveFrequency: 0.0006,
+    scrollSpeed: 43,
+    spawnIntervalPx: 38,
+    roadHalfWidth: 14,
+    curveAmplitude: 13,
+    curveFrequency: 0.0008,
   },
   cap: {
     // 620 px/s against a 620 px lookahead is exactly one second of reaction
@@ -140,28 +146,17 @@ export const DIFFICULTY = {
     curveFrequency: 0.0078,
   },
   /**
-   * The tail: where the two post-rotation axes stop. `spawnIntervalPx` has a
-   * second, lower floor here — 120 px still leaves 90 px of clear track between
-   * rows, more than a car length, but only 0.19 s to read each one. Gaps go
-   * from an average of ~95 px down to ~67 px: from 30 px of slack either side
-   * of the car to 16.
+   * How much a level-up adds to the speed once nothing else can rise. Smaller
+   * than the rotation's step: past the rotation cap every px/s costs reaction
+   * time that cannot be won back.
    */
-  tailCap: {
-    gapSlackRatio: 0.15,
-    spawnIntervalPx: 120,
-  },
-  /** How much one tail level-up moves its axis. */
-  tailStep: {
-    gapSlackRatio: 0.05,
-    spawnIntervalPx: 6,
-  },
+  tailStep: { scrollSpeed: 12 },
 } as const satisfies {
   levelDistancePx: number;
   base: RampStart;
   step: RampBounds;
   cap: RampBounds;
-  tailCap: { gapSlackRatio: number; spawnIntervalPx: number };
-  tailStep: { gapSlackRatio: number; spawnIntervalPx: number };
+  tailStep: { scrollSpeed: number };
 };
 
 /**
@@ -211,16 +206,28 @@ export const TRACK = {
   /** Px between generated track nodes. ~51 nodes cover the visible window. */
   nodeStepPx: 16,
   /**
-   * Maximum |dx/ds| of the centreline: the road's steepest lean, ~29°.
-   * Steeper reads as a zigzag, and `tests/config.test.ts` pins it below what
-   * the car can out-steer at top speed.
+   * Maximum |dx/ds| of the centreline: the road's steepest lean, ~29°. Steeper
+   * reads as a zigzag.
    */
   maxSlope: 0.55,
+  /**
+   * Maximum px per **second** the centreline may travel sideways.
+   *
+   * The real constraint on a curve is not its shape but what following it costs
+   * the driver: a road leaning 0.55 at 712 px/s slides sideways at 391 px/s and
+   * eats 70% of the car's steering just to stay on it, leaving almost nothing
+   * to reach the next gap with. Capping the lateral *speed* instead means the
+   * road straightens as the game gets faster, which is both what a fast road
+   * looks like and what keeps late levels passable.
+   */
+  maxLateralPxPerSec: 250,
   /** Maximum px the half width may change per px of track. */
   widthRatePerPx: 0.06,
 } as const;
 
 export const OBSTACLES = {
+  /** Fraction of the spare road width a gap may be widened by, at random. */
+  gapSlackRatio: 0.55,
   /** How much of the car's theoretical steering reach a gap shift may use. */
   reachSafety: 0.7,
   /**
@@ -275,15 +282,77 @@ export const SCORE = {
  */
 export const SAFE_GAP = CAR.width + 2 * CAR.clearance;
 
+/**
+ * The least warning a player may be given about a row, in seconds.
+ *
+ * With the road's sideways speed capped, following it costs the same at any
+ * scroll speed, so what actually limits speed is how long the player gets to
+ * read what is coming. This is that floor.
+ */
+export const MIN_REACTION_SECONDS = 0.85;
+
+/**
+ * The fastest the game may ever scroll, in px/s — a **fairness** limit, not a
+ * taste one: the visible track ahead divided by the least warning a player may
+ * be given. Derived, so moving the car down the screen moves the ceiling too.
+ */
+export const SPEED_CEILING = Math.floor(LAYOUT.lookaheadPx / MIN_REACTION_SECONDS);
+
+/** How fast the road slides sideways at a given scroll speed, px/s. */
+export function roadLateralSpeed(scrollSpeed: number): number {
+  return Math.min(TRACK.maxSlope * scrollSpeed, TRACK.maxLateralPxPerSec);
+}
+
+/** The steepest the centreline may lean at a given scroll speed. */
+export function maxSlopeAt(scrollSpeed: number): number {
+  return roadLateralSpeed(scrollSpeed) / scrollSpeed;
+}
+
+/**
+ * The cars a player may pick from, in the order the picker shows them.
+ *
+ * `trim` is the outline, and it is not decoration: the road is dark, so a dark
+ * car needs a light edge to stay readable at speed. That is why black's trim is
+ * the lightest of the five.
+ */
+export const CAR_COLORS = [
+  { id: 'white', label: '흰색', body: 0xf2f5fa, trim: 0x98a1b0 },
+  { id: 'yellow', label: '노란색', body: 0xffc400, trim: 0xb08600 },
+  { id: 'red', label: '빨간색', body: 0xe53935, trim: 0x8d1f1c },
+  { id: 'blue', label: '파란색', body: 0x2f7de1, trim: 0x1a4d8f },
+  { id: 'black', label: '검정색', body: 0x1c1f26, trim: 0xe6e9f0 },
+] as const;
+
+export type CarColorId = (typeof CAR_COLORS)[number]['id'];
+
+/** What a player who has never chosen drives. */
+export const DEFAULT_CAR_COLOR: CarColorId = 'yellow';
+
 /** Palette. Textures are generated from these, so no image assets ship. */
 export const COLORS = {
   background: 0x141a24,
   road: 0x2c313d,
   roadEdge: 0xf4f6fb,
   centerLine: 0xffffff,
-  car: 0xffc400,
   carWindow: 0x22262f,
   cone: 0xff6d3b,
   barrier: 0xe8ecf4,
   barrierStripe: 0xd83a2c,
+  /** The touch strip drawn under the car on a touch device. Barely there on
+   * purpose: it marks where the thumb goes without competing with the road. */
+  touchZone: 0xffffff,
+} as const;
+
+/**
+ * The strip at the bottom of a touch screen that says "steer here".
+ *
+ * It sits **below** the car, so the thumb resting on it never covers the car or
+ * the road ahead. Steering still works from anywhere on the screen — this is an
+ * affordance, not a restriction.
+ */
+export const TOUCH_ZONE = {
+  /** Px below the car where the strip begins. */
+  topOffset: 44,
+  fillAlpha: 0.06,
+  borderAlpha: 0.16,
 } as const;

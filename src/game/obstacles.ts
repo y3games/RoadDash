@@ -12,7 +12,7 @@
  */
 
 import type { DifficultyParams } from './config';
-import { CAR, OBSTACLES, SAFE_GAP, TRACK } from './config';
+import { CAR, OBSTACLES, roadLateralSpeed, SAFE_GAP } from './config';
 import type { Random } from './random';
 import type { RoadSpan } from './track';
 
@@ -68,7 +68,7 @@ const WIDTHS: Readonly<Record<ObstacleKind, number>> = {
  */
 export function maxGapShift(params: DifficultyParams): number {
   const seconds = params.spawnIntervalPx / params.scrollSpeed;
-  const spare = CAR.steerSpeed - TRACK.maxSlope * params.scrollSpeed;
+  const spare = CAR.steerSpeed - roadLateralSpeed(params.scrollSpeed);
   return Math.max(spare, 0) * seconds * OBSTACLES.reachSafety;
 }
 
@@ -140,7 +140,11 @@ export function placeRow(
   // left at this level; the slack ratio decides how much wider than that a
   // given row happens to be.
   const floor = Math.min(params.minGapWidth, width);
-  const gapWidth = clamp(floor + (width - floor) * params.gapSlackRatio * random(), floor, width);
+  const gapWidth = clamp(
+    floor + (width - floor) * OBSTACLES.gapSlackRatio * random(),
+    floor,
+    width,
+  );
 
   // Where the gap may legally sit, and where the car could actually get to.
   const legalMin = left + gapWidth / 2;

@@ -11,7 +11,7 @@
  */
 
 import type { DifficultyParams } from './config';
-import { LAYOUT, TRACK } from './config';
+import { LAYOUT, maxSlopeAt, TRACK } from './config';
 import { levelFor, paramsForLevel } from './difficulty';
 
 export interface TrackNode {
@@ -80,11 +80,16 @@ export function stepNode(prev: TrackNode, params: DifficultyParams, stepPx: numb
     bounds.min,
     bounds.max,
   );
+  // The slope limit is a function of the speed this stretch will be driven at:
+  // the road may lean 0.55 while the game is slow, but it straightens as the
+  // game speeds up so that following it never costs more than
+  // TRACK.maxLateralPxPerSec of the car's steering.
+  //
   // The clamp after the approach only bites when the bounds themselves moved
   // (a widening road). Bounds move at most widthRatePerPx per px, far less than
-  // maxSlope, so this cannot break the continuity the approach guarantees.
+  // the slope limit, so this cannot break the continuity the approach gives.
   const centerX = clamp(
-    approach(prev.centerX, target, TRACK.maxSlope * stepPx),
+    approach(prev.centerX, target, maxSlopeAt(params.scrollSpeed) * stepPx),
     bounds.min,
     bounds.max,
   );
