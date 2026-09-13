@@ -1,15 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { CAR, LAYOUT, OBSTACLES } from '../src/game/config';
+import { CAR, LAYOUT, OBSTACLES, SAFE_GAP } from '../src/game/config';
 import { paramsForLevel } from '../src/game/difficulty';
 import type { ObstacleRow } from '../src/game/obstacles';
-import {
-  CROSSING_HALF_LENGTH,
-  freeIntervals,
-  maxGapShift,
-  placeRow,
-  SAFE_GAP,
-} from '../src/game/obstacles';
+import { CROSSING_HALF_LENGTH, freeIntervals, maxGapShift, placeRow } from '../src/game/obstacles';
 import { mulberry32 } from '../src/game/random';
 import type { RoadSpan } from '../src/game/track';
 import { createTrack, extendTrack, roadEdgesAt, roadSpanAcross } from '../src/game/track';
@@ -144,6 +138,33 @@ describe('a row of obstacles', () => {
         expect(obstacle.length).toBe(OBSTACLES.rowLength);
       }
     }
+  });
+
+  /**
+   * The gap width is uniform over its legal range, so before the floor existed
+   * a level-1 player met the game's narrowest possible gap about once every ten
+   * rows — before they had learned how the car responds.
+   */
+  it('gives a beginner a wider floor than the safe minimum', () => {
+    const params = paramsForLevel(1);
+    expect(params.minGapWidth).toBeGreaterThan(SAFE_GAP);
+
+    for (const { span: current, row } of chainRows(1, 300, 314)) {
+      const widest = freeIntervals(row, current).reduce(
+        (best, [from, to]) => Math.max(best, to - from),
+        0,
+      );
+      expect(widest).toBeGreaterThanOrEqual(params.minGapWidth - 1e-9);
+    }
+  });
+
+  it('closes gaps down in the tail, but never past the safe minimum', () => {
+    const late = chainRows(60, 300, 606);
+    const widths = late.map(({ row }) => row.gapWidth);
+    expect(Math.max(...widths)).toBeLessThan(
+      Math.max(...chainRows(29, 300, 606).map(({ row }) => row.gapWidth)),
+    );
+    expect(Math.min(...widths)).toBeGreaterThanOrEqual(SAFE_GAP - 1e-9);
   });
 
   it('is reproducible from a seed', () => {

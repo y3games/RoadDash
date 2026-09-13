@@ -10,20 +10,26 @@
 import type { DifficultyAxis } from './config';
 import { CAR, LAYOUT, MOTION, OBSTACLES, TRACK } from './config';
 import { carRect, hitObstacle, isOffRoad } from './collision';
+import type { SteerBounds } from './input';
 import { DIFFICULTY } from './config';
-import { axisForLevel, levelFor, paramsForLevel, scoreForDistance } from './difficulty';
+import { axisRaisedAt, levelFor, paramsForLevel, pointsFor } from './difficulty';
 import type { Obstacle, ObstacleRow } from './obstacles';
 import { CROSSING_HALF_LENGTH, placeRow } from './obstacles';
 import type { Random } from './random';
 import { mulberry32 } from './random';
 import type { TrackState } from './track';
-import { createTrack, extendTrack, pruneTrack, roadSpanAcross } from './track';
+import { createTrack, extendTrack, pruneTrack, roadEdgesAt, roadSpanAcross } from './track';
 
 export type CrashReason = 'obstacle' | 'offroad';
 
 export interface LevelUp {
   readonly level: number;
-  readonly axis: DifficultyAxis;
+  /**
+   * The axis this level-up actually raised, or null when it raised nothing.
+   * The HUD updates the level badge either way and only announces an axis when
+   * there is one — see `axisRaisedAt()`.
+   */
+  readonly axis: DifficultyAxis | null;
 }
 
 export interface WorldState {
@@ -33,6 +39,11 @@ export interface WorldState {
   carX: number;
   /** Distance travelled. The run's whole progress is this number. */
   carS: number;
+  /**
+   * Points earned so far, unrounded. Accumulated rather than derived from the
+   * distance, because a px is worth more at a higher level.
+   */
+  score: number;
   level: number;
   /** The world holds still until the player first steers. */
   started: boolean;
@@ -92,6 +103,7 @@ export function createWorld(seed: number): WorldState {
     rows: [],
     carX: LAYOUT.width / 2,
     carS: 0,
+    score: 0,
     level: 1,
     started: false,
     crash: null,
@@ -128,7 +140,7 @@ export function stepWorld(world: WorldState, dtSeconds: number, steer: number): 
   const result = (levelUp: LevelUp | null): StepResult => ({
     levelUp,
     crash: world.crash,
-    score: scoreForDistance(world.carS),
+    score: currentScore(world),
   });
 
   // A crash is terminal: the final state is what the game-over panel reports.
@@ -150,6 +162,7 @@ export function stepWorld(world: WorldState, dtSeconds: number, steer: number): 
 
   for (let i = 0; i < substeps; i += 1) {
     world.carS += forwardPerSub;
+    world.score += pointsFor(forwardPerSub, world.level);
     world.carX = clamp(world.carX + lateralPerSub, CAR.width / 2, LAYOUT.width - CAR.width / 2);
     generateAhead(world);
 
@@ -170,8 +183,25 @@ export function stepWorld(world: WorldState, dtSeconds: number, steer: number): 
   if (level === world.level) return result(null);
 
   world.level = level;
-  const axis = axisForLevel(level);
-  return result(axis === null ? null : { level, axis });
+  return result({ level, axis: axisRaisedAt(level) });
+}
+
+/** The score as the player sees it. */
+export function currentScore(world: WorldState): number {
+  return Math.floor(world.score);
+}
+
+/**
+ * The x the car may legally occupy right now, measured the way `isOffRoad`
+ * measures it: the tighter of what its nose and its tail can see.
+ */
+export function drivableBounds(world: WorldState): SteerBounds {
+  const front = roadEdgesAt(world.track, world.carS + CAR.length / 2);
+  const rear = roadEdgesAt(world.track, world.carS - CAR.length / 2);
+  return {
+    min: Math.max(front.left, rear.left) + CAR.width / 2,
+    max: Math.min(front.right, rear.right) - CAR.width / 2,
+  };
 }
 
 /**

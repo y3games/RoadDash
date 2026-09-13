@@ -14,9 +14,29 @@
  */
 export const DIFFICULTY_AXES = ['speed', 'density', 'roadWidth', 'curve'] as const;
 
-export type DifficultyAxis = (typeof DIFFICULTY_AXES)[number];
+export type RotationAxis = (typeof DIFFICULTY_AXES)[number];
 
-/** Everything about the track that difficulty moves. */
+/**
+ * What keeps rising once the four rotation axes are all capped.
+ *
+ * A flat endgame is the wrong shape for a high-score game: difficulty stops
+ * inventing itself and the run becomes an endurance test. These two keep
+ * shrinking the room for error — the gap the car threads and the time between
+ * rows — taken in the same one-at-a-time rotation.
+ */
+export const TAIL_AXES = ['gapWidth', 'spacing'] as const;
+
+export type TailAxis = (typeof TAIL_AXES)[number];
+
+export type DifficultyAxis = RotationAxis | TailAxis;
+
+/**
+ * Everything about the track that difficulty moves.
+ *
+ * The first five are moved by a level-up, one axis at a time. `minGapWidth` is
+ * the exception: it is not an axis but an onboarding concession that decays
+ * with level regardless of whose turn it is.
+ */
 export interface DifficultyParams {
   /** Px per second the world scrolls down — the car's forward speed. */
   readonly scrollSpeed: number;
@@ -28,6 +48,10 @@ export interface DifficultyParams {
   readonly curveAmplitude: number;
   /** Radians of curve phase added per px of track. Higher is twistier. */
   readonly curveFrequency: number;
+  /** Fraction of the spare road width a gap may be widened by, at random. */
+  readonly gapSlackRatio: number;
+  /** Px: no gap may be narrower than this. Decays to SAFE_GAP over the ramp. */
+  readonly minGapWidth: number;
 }
 
 export type DifficultyParamKey = keyof DifficultyParams;
@@ -39,12 +63,30 @@ export type DifficultyParamKey = keyof DifficultyParams;
  * Exported because it is the contract `difficulty.ts` applies and the one
  * `tests/difficulty.test.ts` checks a level-up against.
  */
-export const AXIS_PARAMS: Readonly<Record<DifficultyAxis, readonly DifficultyParamKey[]>> = {
+export const AXIS_PARAMS = {
   speed: ['scrollSpeed'],
   density: ['spawnIntervalPx'],
   roadWidth: ['roadHalfWidth'],
   curve: ['curveAmplitude', 'curveFrequency'],
+} as const satisfies Record<RotationAxis, readonly DifficultyParamKey[]>;
+
+/**
+ * The params the rotation moves — derived from the axis table, so `step` and
+ * `cap` cannot fall out of step with the axes that read them.
+ */
+export type RotationParamKey = (typeof AXIS_PARAMS)[RotationAxis][number];
+
+/** Which param each tail axis moves, in the same shape as AXIS_PARAMS. */
+export const TAIL_AXIS_PARAMS: Readonly<Record<TailAxis, readonly DifficultyParamKey[]>> = {
+  gapWidth: ['gapSlackRatio'],
+  spacing: ['spawnIntervalPx'],
 } as const;
+
+/** The starting value of every param the level model moves. */
+type RampStart = Omit<DifficultyParams, 'minGapWidth'>;
+
+/** A step or a cap for the rotation: one number per rotation param. */
+type RampBounds = Record<RotationParamKey, number>;
 
 /**
  * The difficulty ramp: where every axis starts, how much one level-up moves it,
@@ -57,14 +99,20 @@ export const AXIS_PARAMS: Readonly<Record<DifficultyAxis, readonly DifficultyPar
  * becomes a pure reflex grind from there.
  */
 export const DIFFICULTY = {
-  /** Px of track per level. 1200 is 1.5 screens. */
-  levelDistancePx: 1200,
+  /**
+   * Px of track per level.
+   *
+   * 1000 rather than a screen and a half: at 1200 the first five levels ate 20
+   * seconds — a quarter of the whole ramp — before the game posed a threat.
+   */
+  levelDistancePx: 1000,
   base: {
     scrollSpeed: 260,
     spawnIntervalPx: 420,
     roadHalfWidth: 168,
     curveAmplitude: 52,
     curveFrequency: 0.0042,
+    gapSlackRatio: 0.55,
   },
   step: {
     scrollSpeed: 52,
@@ -83,18 +131,52 @@ export const DIFFICULTY = {
     // 204 px of road: six car widths. Enough for a wall plus a gap, not enough
     // to be casual about it.
     roadHalfWidth: 102,
-    // Derived, not felt: at the minimum half width the centreline may range
-    // over 110..370, i.e. 240 ± 130. So the narrowest road at the widest swing
-    // touches the canvas margin exactly instead of clipping through it.
-    curveAmplitude: 130,
+    // The most swing the road can actually deliver. Above the frequency cap the
+    // centreline is slew-limited to TRACK.maxSlope, so the sine's peak is
+    // reached only if it fits in `maxSlope * π / (2 * frequency)` ≈ 110 px. A
+    // larger number here would be a decoration: the ramp would keep "raising"
+    // an amplitude the road can never draw.
+    curveAmplitude: 110,
     curveFrequency: 0.0078,
+  },
+  /**
+   * The tail: where the two post-rotation axes stop. `spawnIntervalPx` has a
+   * second, lower floor here — 120 px still leaves 90 px of clear track between
+   * rows, more than a car length, but only 0.19 s to read each one. Gaps go
+   * from an average of ~95 px down to ~67 px: from 30 px of slack either side
+   * of the car to 16.
+   */
+  tailCap: {
+    gapSlackRatio: 0.15,
+    spawnIntervalPx: 120,
+  },
+  /** How much one tail level-up moves its axis. */
+  tailStep: {
+    gapSlackRatio: 0.05,
+    spawnIntervalPx: 6,
   },
 } as const satisfies {
   levelDistancePx: number;
-  base: DifficultyParams;
-  step: DifficultyParams;
-  cap: DifficultyParams;
+  base: RampStart;
+  step: RampBounds;
+  cap: RampBounds;
+  tailCap: { gapSlackRatio: number; spawnIntervalPx: number };
+  tailStep: { gapSlackRatio: number; spawnIntervalPx: number };
 };
+
+/**
+ * The gap a beginner is given on top of the safe minimum, and how many levels
+ * it takes to decay away.
+ *
+ * Without it the very first row can be as tight as the very last one: the gap
+ * width is uniform over its whole legal range, so a level-1 player met the
+ * game's narrowest possible gap about once every ten rows, before they had
+ * learned how the car responds.
+ */
+export const EARLY = {
+  gapBonusPx: 70,
+  levels: 12,
+} as const;
 
 /** Logical canvas size. Every game coordinate lives in this space. */
 export const LAYOUT = {
@@ -139,8 +221,6 @@ export const TRACK = {
 } as const;
 
 export const OBSTACLES = {
-  /** Fraction of the spare road width a gap may be widened by, at random. */
-  gapSlackRatio: 0.55,
   /** How much of the car's theoretical steering reach a gap shift may use. */
   reachSafety: 0.7,
   /**
@@ -176,7 +256,24 @@ export const SCORE = {
    * already stored under `roaddash.best` incomparable with new ones.
    */
   pxPerPoint: 10,
+  /**
+   * Extra points per level, as a fraction: level L pays `1 + levelBonus * (L-1)`
+   * times the base rate.
+   *
+   * Distance alone pays *less* for the hard part than the easy part — rows are
+   * 420 px apart at level 1 and 210 at the cap, so passing the hardest row in
+   * the game was worth exactly half of passing the easiest. At 0.06 the level-29
+   * row pays 56 points against level 1's 42, so the rate rises with the risk.
+   * Like `pxPerPoint`, this can only be changed while no records exist.
+   */
+  levelBonus: 0.06,
 } as const;
+
+/**
+ * The narrowest gap the game may ever produce: the car plus clearance on both
+ * sides. Derived, so it cannot drift from the car's own size.
+ */
+export const SAFE_GAP = CAR.width + 2 * CAR.clearance;
 
 /** Palette. Textures are generated from these, so no image assets ship. */
 export const COLORS = {

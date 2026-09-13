@@ -8,8 +8,10 @@ RoadDash is an endless vertical-scrolling racer: drive up a winding road, dodge 
 the run ends the moment you touch anything. Vite + TypeScript + Phaser 3.90, deployed as a static
 site to GitHub Pages at `https://y3games.github.io/RoadDash/`.
 
-Difficulty rises every 1,200 px, and each level-up bumps exactly **one** axis, taken in rotation:
-speed → obstacle density → road width → curve. There is no ending; the score is the distance.
+Difficulty rises every 1,000 px, and each level-up bumps exactly **one** axis, taken in rotation:
+speed → obstacle density → road width → curve. The rotation caps out at level 28 (~65 s); from level
+29 a **tail** keeps tightening gap width and row spacing the same way. There is no ending; the score
+is distance times a per-level multiplier.
 
 Player-facing copy is Korean. There is no backend.
 
@@ -34,13 +36,15 @@ scene; that is the one change that makes the fairness claim untestable.
 
 - `src/game/config.ts` — the **only** place tuning lives: the difficulty table (base/step/cap per
   axis), layout, car, track and obstacle constants. A magic number in a scene is a bug.
-- `src/game/difficulty.ts` — distance → level → params. The rotation is replayed from the base
-  table, so "which axis did level 14 bump?" is answerable by reading `axisForLevel()`.
+- `src/game/difficulty.ts` — distance → level → params, and the score multiplier. The rotation and
+  the tail are replayed from the base table, so "which axis did level 14 bump?" is answerable by
+  reading `axisForLevel()`. `TAIL_START_LEVEL` is derived, never written down.
 - `src/game/track.ts` — road geometry. `TrackNode.phase` is **integrated**, not `frequency * s`;
   see the Gotchas.
 - `src/game/obstacles.ts` — one gap per row, chosen _first_, then blockers tiled into what is left.
 - `src/game/collision.ts` — rectangle overlap and off-road, in (x, s) space.
-- `src/game/world.ts` — the simulation, and the only stateful module under `game/`.
+- `src/game/world.ts` — the simulation, and the only stateful module under `game/`. The score is
+  accumulated here per substep, because a px is worth more at a higher level.
 - `src/scenes/UIScene.ts` — runs _alongside_ GameScene via `scene.launch()`, so the game-over panel
   stays interactive while the world is frozen.
 - `src/services/ScoreService.ts` — the persistence boundary. Adding a leaderboard later means one
@@ -71,6 +75,21 @@ These cost real debugging time. Do not reintroduce them.
   lanes. Without that term every row looks reachable and the sequence is not.
 - **Anything that steers by `nextRowAhead()` must keep the row it is crossing.** Returning only
   rows ahead of the bumper makes the driver abandon the gap it is halfway into.
+- **The HUD announces `axisRaisedAt()`, never `axisForLevel()`.** The latter is the schedule and
+  keeps naming axes after they cap; a toast claiming "속도 상승" while nothing rises teaches the
+  player to ignore the one thing the difficulty model exists to tell them.
+- **The tail starts one level _after_ the rotation caps.** A tail level replaces that level's
+  rotation bump, so `TAIL_START_LEVEL = firstMaxedLevel()` silently ate the last road-width step and
+  left the road 6 px short of its cap forever. It is `firstMaxedLevel() + 1`.
+- **The tail cannot end a run, and nothing fair can.** While I1 and I2 hold, a frame-perfect driver
+  survives indefinitely — the autopilot does. The tail shrinks a human's margin for error; do not
+  write a test that expects it to kill the autopilot.
+- **`cap.curveAmplitude` is bounded by what the road can draw**: `maxSlope * π / (2 * cap.frequency)`
+  ≈ 110 px. Above it the slew limit clips the sine and the ramp raises a number nobody sees.
+- **Pointer steering is clamped to `drivableBounds()`.** Unclamped, tapping the side of the screen —
+  the first thing anyone does on a phone — drives a new player off the road in 0.28 s.
+- **`SCORE.pxPerPoint` and `SCORE.levelBonus` are frozen once records exist.** Changing either
+  makes every stored `roaddash.best` incomparable with new runs.
 - **Clamp the frame delta and substep by distance.** `MOTION.maxFrameMs` stops a tab switch from
   teleporting the car; `MOTION.maxSubStepPx` is what makes tunnelling impossible rather than
   unlikely. Both are pinned by `tests/config.test.ts`.
@@ -126,7 +145,9 @@ Note that a hidden tab also stops repainting, so screenshots return a stale fram
 anything visual in a visible window or on the deployed site.
 
 Synthetic keyboard events need `keyCode`: Phaser identifies keys by `event.keyCode`, so
-`new KeyboardEvent('keydown', { code: 'ArrowLeft' })` alone does nothing.
+`new KeyboardEvent('keydown', { code: 'ArrowLeft' })` alone does nothing. The browser tool's
+`key: "Space"` arrives as an empty event with `keyCode: 0`; dispatch `{ keyCode: 32 }` instead to
+test the restart key.
 
 ## Documentation
 

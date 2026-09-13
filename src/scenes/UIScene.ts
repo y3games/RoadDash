@@ -17,6 +17,8 @@ const AXIS_LABEL: Readonly<Record<DifficultyAxis, string>> = {
   density: '장애물 증가',
   roadWidth: '도로 좁아짐',
   curve: '급커브',
+  gapWidth: '빈틈 좁아짐',
+  spacing: '장애물 빽빽해짐',
 };
 
 const CRASH_LABEL: Readonly<Record<GameOverPayload['reason'], string>> = {
@@ -42,6 +44,10 @@ export class UIScene extends Phaser.Scene {
   private overlay?: Phaser.GameObjects.Container;
   /** Mirrors storage so a new record is recognised without awaiting a read. */
   private best = 0;
+  /** The level the run ended on, shown on the panel. */
+  private level = 1;
+  /** Guards the button and the key racing each other into a double restart. */
+  private restarting = false;
 
   constructor() {
     super('UIScene');
@@ -49,6 +55,9 @@ export class UIScene extends Phaser.Scene {
 
   create(): void {
     const game = this.scene.get('GameScene');
+    this.best = 0;
+    this.level = 1;
+    this.restarting = false;
 
     this.scoreText = this.add.text(24, 22, '0', {
       fontFamily: FONT,
@@ -135,7 +144,10 @@ export class UIScene extends Phaser.Scene {
    * point — it is a warning, not a caption.
    */
   private showLevel({ level, axis }: LevelPayload): void {
+    this.level = level;
     this.levelText.setText(`LV ${level}`);
+    // No axis means the level-up moved nothing — say nothing rather than claim
+    // a rise that did not happen.
     if (axis === null) return;
 
     this.toast?.destroy();
@@ -198,7 +210,7 @@ export class UIScene extends Phaser.Scene {
     const { width, height } = LAYOUT;
     const dim = this.add.rectangle(width / 2, height / 2, width, height, 0x000000, 0.62);
     const panel = this.add
-      .rectangle(width / 2, height / 2, width - 96, 300, 0x161b22, 0.98)
+      .rectangle(width / 2, height / 2, width - 96, 340, 0x161b22, 0.98)
       // Alpha is the third argument. Packing it into the colour as 0xffffff22
       // renders a wrong hue with no error at all.
       .setStrokeStyle(2, 0xffffff, 0.16);
@@ -226,8 +238,15 @@ export class UIScene extends Phaser.Scene {
         fontStyle: 'bold',
       })
       .setOrigin(0.5);
+    const reached = this.add
+      .text(width / 2, height / 2 + 26, `LV ${this.level} 도달`, {
+        fontFamily: FONT,
+        fontSize: '17px',
+        color: '#ffffff99',
+      })
+      .setOrigin(0.5);
     const note = this.add
-      .text(width / 2, height / 2 + 34, isNewBest ? '최고 기록 경신!' : `최고 기록 ${best}점`, {
+      .text(width / 2, height / 2 + 54, isNewBest ? '최고 기록 경신!' : `최고 기록 ${best}점`, {
         fontFamily: FONT,
         fontSize: '18px',
         color: isNewBest ? '#81c784' : '#ffffffaa',
@@ -235,10 +254,10 @@ export class UIScene extends Phaser.Scene {
       .setOrigin(0.5);
 
     const button = this.add
-      .rectangle(width / 2, height / 2 + 100, 200, 56, 0xffc400)
+      .rectangle(width / 2, height / 2 + 112, 200, 56, 0xffc400)
       .setInteractive({ useHandCursor: true });
     const buttonLabel = this.add
-      .text(width / 2, height / 2 + 100, '다시 하기', {
+      .text(width / 2, height / 2 + 112, '다시 하기', {
         fontFamily: FONT,
         fontSize: '20px',
         color: '#0d1117',
@@ -248,21 +267,39 @@ export class UIScene extends Phaser.Scene {
     // `once`, and on pointerup: the tap that ends a run must not also restart it.
     button.once('pointerup', () => this.restart());
 
+    const hint = this.add
+      .text(width / 2, height / 2 + 152, 'SPACE / ENTER', {
+        fontFamily: FONT,
+        fontSize: '13px',
+        color: '#ffffff66',
+      })
+      .setOrigin(0.5);
+    // A run is under two minutes, so the hand should never have to leave the
+    // keyboard to start the next one.
+    this.input.keyboard?.once('keydown-SPACE', () => this.restart());
+    this.input.keyboard?.once('keydown-ENTER', () => this.restart());
+
     this.overlay = this.add.container(0, 0, [
       dim,
       panel,
       title,
       cause,
       result,
+      reached,
       note,
       button,
       buttonLabel,
+      hint,
     ]);
     this.overlay.setAlpha(0);
     this.tweens.add({ targets: this.overlay, alpha: 1, duration: 220 });
   }
 
   private restart(): void {
+    // The button and the keys are separate paths into here; the first one wins.
+    if (this.restarting) return;
+    this.restarting = true;
+
     const game = this.scene.get('GameScene');
     // Stop this scene first: GameScene.create() launches a fresh one.
     this.scene.stop();
