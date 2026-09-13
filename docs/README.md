@@ -16,10 +16,12 @@
   - [adr-004-물리-엔진-제거.md](02-architecture/adr-004-물리-엔진-제거.md) —
     Matter.js를 쓰지 않는 이유와 그 대가
   - [adr-005-난이도-축-회전과-공정성-불변식.md](02-architecture/adr-005-난이도-축-회전과-공정성-불변식.md) —
-    레벨업이 한 축만 올리는 이유, 통과 가능성을 보장하는 세 불변식
+    레벨업이 한 축만 올리는 이유, 통과 가능성을 보장하는 세 불변식, 꼬리 축
 - [03-notes](03-notes/) — 작업 메모
   - [2026-09-13-roaddash-초기-구현.md](03-notes/2026-09-13-roaddash-초기-구현.md) —
     오토파일럿 테스트가 잡아낸 세 가지 불공정 버그
+  - [2026-09-13-밸런스-리뷰-반영.md](03-notes/2026-09-13-밸런스-리뷰-반영.md) —
+    거짓 토스트·점수 역전·초반 급사 수정, 꼬리 축 추가
 - [04-references](04-references/) — 참고 자료
   - [references.md](04-references/references.md)
 - [assets/images](assets/images/) — 스크린샷, 다이어그램

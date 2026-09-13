@@ -18,6 +18,12 @@ export interface SteerPointer {
   readonly x: number;
 }
 
+/** The range of x the car may legally occupy right now. */
+export interface SteerBounds {
+  readonly min: number;
+  readonly max: number;
+}
+
 /**
  * Steering in [-1, 1]: negative is left.
  *
@@ -26,13 +32,28 @@ export interface SteerPointer {
  * position**: the car is pulled toward the finger and saturates
  * `CAR.pointerRangePx` away from it, which feels like steering rather than like
  * a relative joystick, and needs no on-screen control.
+ *
+ * The pointer's target is clamped into `bounds` — the road the car may legally
+ * occupy. Without that, the most natural first thing anyone does on a phone,
+ * tapping the side of the screen, is an instruction to drive off the road, and
+ * a new player is dead a quarter of a second into their first run. Clamped, the
+ * same tap reads as "hug that edge", which is what they meant. Obstacles still
+ * kill; only the self-inflicted verge does not.
  */
-export function steerInput(keys: SteerKeys, pointer: SteerPointer | null, carX: number): number {
+export function steerInput(
+  keys: SteerKeys,
+  pointer: SteerPointer | null,
+  carX: number,
+  bounds: SteerBounds,
+): number {
   const keyboard = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
   if (keyboard !== 0) return keyboard;
 
   if (pointer !== null && pointer.down) {
-    const offset = (pointer.x - carX) / CAR.pointerRangePx;
+    const low = Math.min(bounds.min, bounds.max);
+    const high = Math.max(bounds.min, bounds.max);
+    const target = Math.min(Math.max(pointer.x, low), high);
+    const offset = (target - carX) / CAR.pointerRangePx;
     return Math.min(Math.max(offset, -1), 1);
   }
 

@@ -1,11 +1,10 @@
 import Phaser from 'phaser';
 
 import { CAR, COLORS, LAYOUT, MOTION, TRACK } from '../game/config';
-import { scoreForDistance } from '../game/difficulty';
 import { steerInput } from '../game/input';
 import type { ObstacleKind } from '../game/obstacles';
 import type { CrashReason, WorldState } from '../game/world';
-import { createWorld, stepWorld } from '../game/world';
+import { createWorld, currentScore, drivableBounds, stepWorld } from '../game/world';
 import type { Player } from '../services/player';
 import type { ScoreService } from '../services/ScoreService';
 import { CAR_TEXTURE, obstacleTextureKey } from './BootScene';
@@ -78,8 +77,9 @@ export class GameScene extends Phaser.Scene {
     this.cursors = this.input.keyboard?.createCursorKeys();
     this.keyA = this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.A);
     this.keyD = this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.D);
-    // Without this the arrow keys scroll the page instead of steering.
-    this.input.keyboard?.addCapture('LEFT,RIGHT,A,D,SPACE');
+    // Without this the arrow keys scroll the page instead of steering, and
+    // SPACE scrolls instead of restarting (UIScene listens for it).
+    this.input.keyboard?.addCapture('LEFT,RIGHT,A,D,SPACE,ENTER');
 
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
       if (this.pointerId !== null) return;
@@ -130,7 +130,7 @@ export class GameScene extends Phaser.Scene {
       right: (this.cursors?.right.isDown ?? false) || (this.keyD?.isDown ?? false),
     };
     const pointer = this.pointerId === null ? null : { down: true, x: this.pointerX };
-    return steerInput(keys, pointer, this.world.carX);
+    return steerInput(keys, pointer, this.world.carX, drivableBounds(this.world));
   }
 
   override update(_time: number, delta: number): void {
@@ -248,7 +248,7 @@ export class GameScene extends Phaser.Scene {
     this.cameras.main.shake(220, 0.012);
     this.car.setTintFill(0xff5252);
 
-    const score = scoreForDistance(this.world.carS);
+    const score = currentScore(this.world);
     const service = this.registry.get('scoreService') as ScoreService | undefined;
     const player = this.registry.get('player') as Player | undefined;
 

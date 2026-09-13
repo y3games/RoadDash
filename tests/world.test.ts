@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import { CAR, LAYOUT, OBSTACLES, TRACK } from '../src/game/config';
-import { roadEdgesAt, sampleTrack } from '../src/game/track';
+import { scoreMultiplier, TAIL_START_LEVEL } from '../src/game/difficulty';
+import { sampleTrack } from '../src/game/track';
 import type { WorldState } from '../src/game/world';
-import { createWorld, nextRowAhead, stepWorld } from '../src/game/world';
+import { createWorld, drivableBounds, nextRowAhead, stepWorld } from '../src/game/world';
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
@@ -17,14 +18,12 @@ function clamp(value: number, min: number, max: number): number {
  * lacks. If this can survive, a human can.
  */
 function autopilot(world: WorldState, dtSeconds: number): number {
-  // The road the car is actually standing on, measured the way isOffRoad does:
-  // the tighter of what its nose and its tail can see. Steering by the edges at
-  // the car's midpoint alone is what puts a nose over the line on a curve.
-  const front = roadEdgesAt(world.track, world.carS + CAR.length / 2);
-  const rear = roadEdgesAt(world.track, world.carS - CAR.length / 2);
-  const margin = CAR.width / 2 + 8;
-  const left = Math.max(front.left, rear.left) + margin;
-  const right = Math.min(front.right, rear.right) - margin;
+  // The road the car may legally occupy, plus a few px of humility. This is the
+  // same function the game gives the pointer, so the test drives the car the
+  // way a player does.
+  const bounds = drivableBounds(world);
+  const left = bounds.min + 8;
+  const right = bounds.max - 8;
 
   const row = nextRowAhead(world);
   const wanted = row?.gapCenter ?? sampleTrack(world.track, world.carS).centerX;
@@ -81,7 +80,7 @@ describe('a run', () => {
       const world = createWorld(seed);
       drive(world, 120, 1000 / 60);
       expect(world.crash, `seed ${seed} crashed at ${Math.round(world.carS)}px`).toBeNull();
-      expect(world.level).toBeGreaterThan(25);
+      expect(world.level).toBeGreaterThanOrEqual(TAIL_START_LEVEL);
     }
   });
 
@@ -174,6 +173,57 @@ describe('a run ends', () => {
     stepWorld(world, 0, 1);
     stepWorld(world, -1, 1);
     expect(world.carS).toBe(carS);
+  });
+});
+
+describe('the endgame tail', () => {
+  /**
+   * A perfect player cannot be killed by a track that keeps its fairness
+   * invariants — that is what fairness *means*. So the tail's job is not to end
+   * the run but to shrink what a human has to work with, and this pins that it
+   * actually does: the rows a two-minute run meets at the end are closer
+   * together and their gaps narrower than anything the rotation produced.
+   */
+  it('keeps tightening the track after the rotation is finished', () => {
+    const world = createWorld(2024);
+    drive(world, 120, 1000 / 60);
+    expect(world.crash).toBeNull();
+    expect(world.level).toBeGreaterThan(TAIL_START_LEVEL + 10);
+
+    const late = world.rows.map((row) => row.gapWidth);
+    const early = createWorld(2024).rows.map((row) => row.gapWidth);
+    expect(Math.min(...late)).toBeLessThan(Math.min(...early));
+  });
+});
+
+describe('the score', () => {
+  it('counts up from zero and stays whole', () => {
+    const world = createWorld(31);
+    let previous = 0;
+    for (let i = 0; i < 600 && world.crash === null; i += 1) {
+      const { score } = stepWorld(world, 1 / 60, autopilot(world, 1 / 60));
+      expect(Number.isInteger(score)).toBe(true);
+      expect(score).toBeGreaterThanOrEqual(previous);
+      previous = score;
+    }
+    expect(previous).toBeGreaterThan(0);
+  });
+
+  /**
+   * The multiplier's whole point: the same stretch of track must pay more when
+   * it is harder, or the hardest rows in the game are the cheapest.
+   */
+  it('pays more for the same distance later in the run', () => {
+    const world = createWorld(77);
+    drive(world, 2, 1000 / 60);
+    const earlyLevel = world.level;
+    const earlyRate = world.score / world.carS;
+
+    drive(world, 40, 1000 / 60);
+    expect(world.crash).toBeNull();
+    expect(world.level).toBeGreaterThan(earlyLevel);
+    expect(world.score / world.carS).toBeGreaterThan(earlyRate);
+    expect(scoreMultiplier(world.level)).toBeGreaterThan(scoreMultiplier(earlyLevel));
   });
 });
 

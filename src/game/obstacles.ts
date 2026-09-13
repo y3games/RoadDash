@@ -12,7 +12,7 @@
  */
 
 import type { DifficultyParams } from './config';
-import { CAR, OBSTACLES, TRACK } from './config';
+import { CAR, OBSTACLES, SAFE_GAP, TRACK } from './config';
 import type { Random } from './random';
 import type { RoadSpan } from './track';
 
@@ -36,12 +36,6 @@ export interface ObstacleRow {
   readonly gapWidth: number;
   readonly obstacles: readonly Obstacle[];
 }
-
-/**
- * The narrowest gap the game may ever produce: the car plus clearance on both
- * sides. Derived, so it cannot drift from the car's own size.
- */
-export const SAFE_GAP = CAR.width + 2 * CAR.clearance;
 
 /**
  * Half the stretch of track the car occupies while crossing a row: its own
@@ -142,11 +136,11 @@ export function placeRow(
     return { s: span.s, gapCenter: center, gapWidth: width, obstacles: [] };
   }
 
-  const gapWidth = clamp(
-    SAFE_GAP + (width - SAFE_GAP) * OBSTACLES.gapSlackRatio * random(),
-    SAFE_GAP,
-    width,
-  );
+  // The floor is the safe minimum plus whatever of the beginner's bonus is
+  // left at this level; the slack ratio decides how much wider than that a
+  // given row happens to be.
+  const floor = Math.min(params.minGapWidth, width);
+  const gapWidth = clamp(floor + (width - floor) * params.gapSlackRatio * random(), floor, width);
 
   // Where the gap may legally sit, and where the car could actually get to.
   const legalMin = left + gapWidth / 2;

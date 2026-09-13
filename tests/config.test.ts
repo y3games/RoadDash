@@ -5,12 +5,14 @@ import {
   CAR,
   DIFFICULTY,
   DIFFICULTY_AXES,
+  EARLY,
   LAYOUT,
   MOTION,
   OBSTACLES,
+  SAFE_GAP,
   TRACK,
 } from '../src/game/config';
-import { SAFE_GAP } from '../src/game/obstacles';
+import { maxGapShift } from '../src/game/obstacles';
 
 /**
  * The balance table is only sound if a handful of relationships between its
@@ -55,7 +57,17 @@ describe('the hardest the game ever gets', () => {
   });
 
   it('leaves a car length of clear track between the tightest rows', () => {
-    expect(DIFFICULTY.cap.spawnIntervalPx - OBSTACLES.rowLength).toBeGreaterThan(CAR.length);
+    // The tail floor, not the rotation cap: the tail is what actually decides
+    // how close two rows ever get.
+    expect(DIFFICULTY.tailCap.spawnIntervalPx - OBSTACLES.rowLength).toBeGreaterThan(CAR.length);
+  });
+
+  it('asks for no more curve than the road is allowed to draw', () => {
+    // A slew-limited follower of a sine can only reach an amplitude of
+    // maxSlope * π / (2 * frequency). A larger cap would be a decoration: the
+    // ramp would keep raising a number the road cannot express.
+    const reachable = (TRACK.maxSlope * Math.PI) / (2 * DIFFICULTY.cap.curveFrequency);
+    expect(DIFFICULTY.cap.curveAmplitude).toBeLessThanOrEqual(reachable);
   });
 
   it('keeps the widest swing on the narrowest road inside the canvas', () => {
@@ -65,6 +77,37 @@ describe('the hardest the game ever gets', () => {
 
   it('leaves a full second of lookahead at top speed', () => {
     expect(LAYOUT.lookaheadPx / DIFFICULTY.cap.scrollSpeed).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('the endgame tail', () => {
+  it('tightens both of its axes past where the rotation left them', () => {
+    expect(DIFFICULTY.tailCap.spawnIntervalPx).toBeLessThan(DIFFICULTY.cap.spawnIntervalPx);
+    expect(DIFFICULTY.tailCap.gapSlackRatio).toBeLessThan(DIFFICULTY.base.gapSlackRatio);
+    expect(DIFFICULTY.tailStep.spawnIntervalPx).toBeGreaterThan(0);
+    expect(DIFFICULTY.tailStep.gapSlackRatio).toBeGreaterThan(0);
+  });
+
+  it('still leaves the car somewhere to go at its tightest', () => {
+    const tightest = {
+      ...DIFFICULTY.cap,
+      spawnIntervalPx: DIFFICULTY.tailCap.spawnIntervalPx,
+      gapSlackRatio: DIFFICULTY.tailCap.gapSlackRatio,
+      minGapWidth: SAFE_GAP,
+    };
+    // A budget of zero would mean every gap sits exactly where the last one
+    // did — the track would stop asking anything of the player.
+    expect(maxGapShift(tightest)).toBeGreaterThan(CAR.width / 2);
+  });
+});
+
+describe('the beginner’s gap', () => {
+  it('starts wider than the safe minimum and decays onto it', () => {
+    expect(EARLY.gapBonusPx).toBeGreaterThan(0);
+    expect(EARLY.levels).toBeGreaterThan(1);
+    // It must fit inside the road it is given, or level 1 would have no room
+    // for obstacles at all.
+    expect(SAFE_GAP + EARLY.gapBonusPx).toBeLessThan(2 * DIFFICULTY.base.roadHalfWidth);
   });
 });
 
